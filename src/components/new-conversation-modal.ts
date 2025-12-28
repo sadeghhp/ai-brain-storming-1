@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.7.0
+// Version: 2.8.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -70,6 +70,9 @@ export class NewConversationModal extends HTMLElement {
   // Enabled languages from settings
   private enabledLanguages: Language[] = getEnabledLanguages(['']);
   private settingsUnsubscribe: (() => void) | null = null;
+  // Hidden categories/presets from settings
+  private hiddenCategories: Set<string> = new Set();
+  private hiddenPresets: Set<string> = new Set();
 
   static get observedAttributes() {
     return ['open'];
@@ -90,8 +93,23 @@ export class NewConversationModal extends HTMLElement {
       this.settingsUnsubscribe = null;
     }
 
-    this.settingsUnsubscribe = eventBus.on('settings:updated', (settings: AppSettings) => {
+    this.settingsUnsubscribe = eventBus.on('settings:updated', async (settings: AppSettings) => {
       this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
+      this.hiddenCategories = new Set(settings.hiddenCategories || []);
+      this.hiddenPresets = new Set(settings.hiddenPresets || []);
+      
+      // Re-load presets to apply new visibility filters
+      const allPresets = await presetStorage.getAll();
+      this.presets = allPresets.filter(preset => {
+        if (this.hiddenCategories.has(preset.category)) return false;
+        if (this.hiddenPresets.has(preset.id)) return false;
+        return true;
+      });
+
+      // Ensure hidden presets cannot remain selected
+      const visiblePresetIds = new Set(this.presets.map(p => p.id));
+      this.selectedPresets = new Set(Array.from(this.selectedPresets).filter(id => visiblePresetIds.has(id)));
+      
       // Re-render only if modal is open
       if (this.getAttribute('open') === 'true') {
         this.render();
@@ -117,12 +135,31 @@ export class NewConversationModal extends HTMLElement {
   }
 
   private async loadData() {
-    this.presets = await presetStorage.getAll();
+    const allPresets = await presetStorage.getAll();
     this.providers = await providerStorage.getAll();
     
-    // Load enabled languages from settings
+    // Load settings for languages and hidden presets/categories
     const settings = await settingsStorage.get();
     this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
+    this.hiddenCategories = new Set(settings.hiddenCategories || []);
+    this.hiddenPresets = new Set(settings.hiddenPresets || []);
+    
+    // Filter out hidden categories and individual presets
+    this.presets = allPresets.filter(preset => {
+      // Filter by category
+      if (this.hiddenCategories.has(preset.category)) {
+        return false;
+      }
+      // Filter by individual preset
+      if (this.hiddenPresets.has(preset.id)) {
+        return false;
+      }
+      return true;
+    });
+
+    // Ensure hidden presets cannot remain selected
+    const visiblePresetIds = new Set(this.presets.map(p => p.id));
+    this.selectedPresets = new Set(Array.from(this.selectedPresets).filter(id => visiblePresetIds.has(id)));
     
     // Auto-fetch models for active providers that have none
     await this.autoFetchModelsIfNeeded();

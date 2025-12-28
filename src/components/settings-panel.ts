@@ -587,7 +587,7 @@ export class SettingsPanel extends HTMLElement {
 
         .category-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
           gap: var(--space-2);
           margin-bottom: var(--space-4);
         }
@@ -596,11 +596,14 @@ export class SettingsPanel extends HTMLElement {
           display: flex;
           align-items: center;
           justify-content: space-between;
+          gap: var(--space-3);
           padding: var(--space-2) var(--space-3);
           background: var(--color-surface);
           border: 1px solid var(--color-border);
           border-radius: var(--radius-md);
           transition: all var(--transition-fast);
+          box-sizing: border-box;
+          min-width: 0; /* critical for grid/flex overflow */
         }
 
         .category-toggle:hover {
@@ -618,10 +621,24 @@ export class SettingsPanel extends HTMLElement {
           gap: var(--space-2);
           font-size: var(--text-sm);
           color: var(--color-text-primary);
+          flex: 1;
+          min-width: 0; /* allow text to wrap instead of pushing the toggle */
         }
 
         .category-icon {
           font-size: var(--text-base);
+          width: 18px;
+          text-align: center;
+          flex-shrink: 0;
+        }
+
+        .category-name {
+          min-width: 0;
+          /* Wrap on spaces/punctuation; only break long unbroken tokens if needed */
+          overflow-wrap: break-word;
+          word-break: normal;
+          hyphens: auto;
+          line-height: 1.2;
         }
 
         .mini-toggle {
@@ -1048,7 +1065,7 @@ export class SettingsPanel extends HTMLElement {
                   <div class="category-toggle ${isHidden ? 'hidden' : ''}" data-category-id="${cat.id}">
                     <div class="category-info">
                       <span class="category-icon">${cat.icon}</span>
-                      <span>${cat.name}</span>
+                      <span class="category-name">${cat.name}</span>
                     </div>
                     <label class="mini-toggle">
                       <input type="checkbox" class="category-visibility-toggle" data-category="${cat.id}" ${!isHidden ? 'checked' : ''}>

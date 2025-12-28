@@ -1,9 +1,9 @@
 // ============================================
 // AI Brainstorm - Agent Editor Modal
-// Version: 1.3.0
+// Version: 1.4.0
 // ============================================
 
-import { presetStorage, providerStorage } from '../storage/storage-manager';
+import { presetStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
 import { presetCategories } from '../agents/presets';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import type { Agent, AgentPreset, LLMProvider } from '../types';
@@ -39,6 +39,8 @@ export class AgentEditorModal extends HTMLElement {
   private selectedPresetId: string | null = null;
   private formData: Partial<AgentEditorResult> = {};
   private expandedCategories: Set<string> = new Set();
+  private hiddenCategories: Set<string> = new Set();
+  private hiddenPresets: Set<string> = new Set();
 
   static get observedAttributes() {
     return ['open'];
@@ -100,8 +102,19 @@ export class AgentEditorModal extends HTMLElement {
   }
 
   private async loadData() {
-    this.presets = await presetStorage.getAll();
+    const allPresets = await presetStorage.getAll();
     this.providers = await providerStorage.getAll();
+
+    // Apply preset visibility filters from settings
+    const settings = await settingsStorage.get();
+    this.hiddenCategories = new Set(settings.hiddenCategories || []);
+    this.hiddenPresets = new Set(settings.hiddenPresets || []);
+
+    this.presets = allPresets.filter(preset => {
+      if (this.hiddenCategories.has(preset.category)) return false;
+      if (this.hiddenPresets.has(preset.id)) return false;
+      return true;
+    });
   }
 
   private async loadPresetData(presetId: string) {
