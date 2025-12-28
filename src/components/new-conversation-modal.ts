@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.3.0
+// Version: 2.4.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -9,7 +9,9 @@ import { presetCategories } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
-import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel } from '../types';
+import { startingStrategies, getStrategyById, buildOpeningStatement, buildGroundRules } from '../strategies/starting-strategies';
+import { conversationTemplates, templateCategories, getTemplateById } from '../strategies/conversation-templates';
+import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
 
@@ -41,6 +43,11 @@ export class NewConversationModal extends HTMLElement {
   private isFetchingModels: boolean = false;
   private modelFetchError: string | null = null;
   private expandedCategories: Set<string> = new Set();
+  // Strategy and template state
+  private selectedStrategyId: StartingStrategyId = 'open-brainstorm';
+  private selectedTemplateId: string | null = null;
+  private customOpeningStatement: string = '';
+  private showOpeningStatementField: boolean = false;
 
   static get observedAttributes() {
     return ['open'];
@@ -148,6 +155,11 @@ export class NewConversationModal extends HTMLElement {
     this.selectedModelId = null;
     this.customAgents = [];
     this.editingAgentIndex = -1;
+    // Reset strategy state
+    this.selectedStrategyId = 'open-brainstorm';
+    this.selectedTemplateId = null;
+    this.customOpeningStatement = '';
+    this.showOpeningStatementField = false;
   }
 
   private generateAgentId(): string {
@@ -852,6 +864,129 @@ export class NewConversationModal extends HTMLElement {
           background: var(--color-border);
           margin: var(--space-5) 0;
         }
+
+        /* Strategy Picker Styles */
+        .strategy-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: var(--space-2);
+        }
+
+        @media (max-width: 560px) {
+          .strategy-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+
+        .strategy-card {
+          padding: var(--space-3);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          text-align: center;
+          transition: all var(--transition-fast);
+        }
+
+        .strategy-card:hover {
+          background: var(--color-surface-hover);
+          border-color: var(--color-border-strong);
+          transform: translateY(-1px);
+        }
+
+        .strategy-card.selected {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 1px var(--color-primary);
+        }
+
+        .strategy-icon {
+          font-size: var(--text-2xl);
+          margin-bottom: var(--space-1);
+          display: block;
+        }
+
+        .strategy-name {
+          font-weight: var(--font-medium);
+          font-size: var(--text-xs);
+          color: var(--color-text-primary);
+          margin-bottom: 2px;
+        }
+
+        .strategy-desc {
+          font-size: 10px;
+          color: var(--color-text-tertiary);
+          line-height: 1.3;
+        }
+
+        /* Template selector */
+        .template-row {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          margin-top: var(--space-3);
+        }
+
+        .template-row .form-select {
+          flex: 1;
+        }
+
+        .template-label {
+          font-size: var(--text-sm);
+          color: var(--color-text-secondary);
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+          white-space: nowrap;
+        }
+
+        /* Opening statement toggle */
+        .opening-toggle {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          margin-top: var(--space-3);
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-bg-tertiary);
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          font-size: var(--text-sm);
+          color: var(--color-text-secondary);
+          transition: all var(--transition-fast);
+        }
+
+        .opening-toggle:hover {
+          color: var(--color-text-primary);
+          background: var(--color-surface);
+        }
+
+        .opening-toggle-icon {
+          transition: transform 0.2s ease;
+        }
+
+        .opening-toggle.expanded .opening-toggle-icon {
+          transform: rotate(90deg);
+        }
+
+        .opening-statement-field {
+          margin-top: var(--space-2);
+          display: none;
+        }
+
+        .opening-statement-field.visible {
+          display: block;
+        }
+
+        .opening-statement-field .form-textarea {
+          min-height: 60px;
+          font-size: var(--text-sm);
+        }
+
+        .opening-hint {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          margin-top: var(--space-1);
+        }
       </style>
 
       <div class="modal-overlay">
@@ -883,6 +1018,67 @@ export class NewConversationModal extends HTMLElement {
                 <label class="form-label">Goal</label>
                 <textarea class="form-textarea" id="goal" placeholder="What do you want to achieve from this discussion?" required></textarea>
               </div>
+
+              <!-- Starting Strategy Section -->
+              <div class="form-group">
+                <label class="form-label">Starting Strategy</label>
+                <div class="strategy-grid">
+                  ${startingStrategies.map(strategy => `
+                    <div class="strategy-card ${this.selectedStrategyId === strategy.id ? 'selected' : ''}" 
+                         data-strategy-id="${strategy.id}" 
+                         title="${strategy.description}">
+                      <span class="strategy-icon">${strategy.icon}</span>
+                      <div class="strategy-name">${strategy.name}</div>
+                      <div class="strategy-desc">${strategy.shortDescription}</div>
+                    </div>
+                  `).join('')}
+                </div>
+
+                <!-- Quick Template Selector -->
+                <div class="template-row">
+                  <span class="template-label">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                      <line x1="9" y1="9" x2="15" y2="9"/>
+                      <line x1="9" y1="13" x2="15" y2="13"/>
+                      <line x1="9" y1="17" x2="12" y2="17"/>
+                    </svg>
+                    Template:
+                  </span>
+                  <select class="form-select" id="template-select">
+                    <option value="">None (custom)</option>
+                    ${templateCategories.map(cat => {
+                      const templates = conversationTemplates.filter(t => t.category === cat.id);
+                      if (templates.length === 0) return '';
+                      return `
+                        <optgroup label="${cat.icon} ${cat.name}">
+                          ${templates.map(t => `
+                            <option value="${t.id}" ${this.selectedTemplateId === t.id ? 'selected' : ''}>
+                              ${t.icon} ${t.name}
+                            </option>
+                          `).join('')}
+                        </optgroup>
+                      `;
+                    }).join('')}
+                  </select>
+                </div>
+
+                <!-- Opening Statement Toggle -->
+                <div class="opening-toggle ${this.showOpeningStatementField ? 'expanded' : ''}" id="opening-toggle">
+                  <svg class="opening-toggle-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18l6-6-6-6"/>
+                  </svg>
+                  Custom opening statement
+                </div>
+                <div class="opening-statement-field ${this.showOpeningStatementField ? 'visible' : ''}">
+                  <textarea class="form-textarea" id="opening-statement" 
+                    placeholder="Set the stage for your discussion. This will be shown to all agents at the start..."
+                  >${this.customOpeningStatement}</textarea>
+                  <div class="opening-hint">Leave empty to use the strategy's default opening.</div>
+                </div>
+              </div>
+
+              <div class="section-divider"></div>
 
               <div class="form-group">
                 <label class="form-label">Conversation Mode</label>
@@ -1161,6 +1357,44 @@ export class NewConversationModal extends HTMLElement {
         this.shadowRoot?.querySelectorAll('.mode-option').forEach(o => o.classList.remove('selected'));
         option.classList.add('selected');
       });
+    });
+
+    // Strategy selector
+    this.shadowRoot?.querySelectorAll('.strategy-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const strategyId = card.getAttribute('data-strategy-id') as StartingStrategyId;
+        if (strategyId) {
+          this.selectedStrategyId = strategyId;
+          this.shadowRoot?.querySelectorAll('.strategy-card').forEach(c => c.classList.remove('selected'));
+          card.classList.add('selected');
+        }
+      });
+    });
+
+    // Template selector
+    const templateSelect = this.shadowRoot?.getElementById('template-select') as HTMLSelectElement | null;
+    templateSelect?.addEventListener('change', () => {
+      const templateId = templateSelect.value;
+      this.selectedTemplateId = templateId || null;
+      
+      if (templateId) {
+        this.applyTemplate(templateId);
+      }
+    });
+
+    // Opening statement toggle
+    const openingToggle = this.shadowRoot?.getElementById('opening-toggle');
+    openingToggle?.addEventListener('click', () => {
+      this.showOpeningStatementField = !this.showOpeningStatementField;
+      openingToggle.classList.toggle('expanded', this.showOpeningStatementField);
+      const field = this.shadowRoot?.querySelector('.opening-statement-field');
+      field?.classList.toggle('visible', this.showOpeningStatementField);
+    });
+
+    // Opening statement input
+    const openingInput = this.shadowRoot?.getElementById('opening-statement') as HTMLTextAreaElement | null;
+    openingInput?.addEventListener('input', () => {
+      this.customOpeningStatement = openingInput.value;
     });
 
     // Agent mode toggle
@@ -1468,6 +1702,58 @@ export class NewConversationModal extends HTMLElement {
     });
   }
 
+  /**
+   * Apply a template to the form
+   */
+  private applyTemplate(templateId: string) {
+    const template = getTemplateById(templateId);
+    if (!template) return;
+
+    // Update form fields
+    const subjectInput = this.shadowRoot?.getElementById('subject') as HTMLInputElement | null;
+    const goalInput = this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement | null;
+    
+    if (subjectInput) subjectInput.value = template.subject;
+    if (goalInput) goalInput.value = template.goal;
+
+    // Update strategy
+    this.selectedStrategyId = template.strategy;
+    this.shadowRoot?.querySelectorAll('.strategy-card').forEach(card => {
+      const strategyId = card.getAttribute('data-strategy-id');
+      card.classList.toggle('selected', strategyId === template.strategy);
+    });
+
+    // Update mode
+    this.shadowRoot?.querySelectorAll('.mode-option').forEach(option => {
+      const mode = option.getAttribute('data-mode');
+      option.classList.toggle('selected', mode === template.mode);
+    });
+
+    // Update opening statement if template has one
+    if (template.openingStatement) {
+      this.customOpeningStatement = template.openingStatement;
+      this.showOpeningStatementField = true;
+      const openingToggle = this.shadowRoot?.getElementById('opening-toggle');
+      const openingField = this.shadowRoot?.querySelector('.opening-statement-field');
+      const openingInput = this.shadowRoot?.getElementById('opening-statement') as HTMLTextAreaElement | null;
+      
+      openingToggle?.classList.add('expanded');
+      openingField?.classList.add('visible');
+      if (openingInput) openingInput.value = template.openingStatement;
+    }
+
+    // Select recommended presets if any
+    if (template.recommendedPresets.length > 0 && !this.isAdvancedMode) {
+      this.selectedPresets.clear();
+      template.recommendedPresets.forEach(presetId => {
+        if (this.presets.some(p => p.id === presetId)) {
+          this.selectedPresets.add(presetId);
+        }
+      });
+      this.render(); // Re-render to show updated selections
+    }
+  }
+
   private updateSelectionState() {
     const countBadge = this.shadowRoot?.querySelector('.preset-count') as HTMLElement;
     if (countBadge) {
@@ -1554,6 +1840,12 @@ export class NewConversationModal extends HTMLElement {
     }
 
     try {
+      // Build opening statement and ground rules from strategy
+      const strategy = getStrategyById(this.selectedStrategyId);
+      const openingStatement = this.customOpeningStatement || 
+        (strategy ? buildOpeningStatement(strategy, subject, goal) : undefined);
+      const groundRules = strategy ? buildGroundRules(strategy) : undefined;
+
       const engine = await ConversationEngine.create(
         subject,
         goal,
@@ -1563,6 +1855,9 @@ export class NewConversationModal extends HTMLElement {
           speedMs: 2000,
           maxContextTokens: 8000,
           includeSecretary: true,
+          startingStrategy: this.selectedStrategyId,
+          openingStatement,
+          groundRules,
         }
       );
 

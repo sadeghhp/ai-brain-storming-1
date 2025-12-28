@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 // ----- Enums -----
@@ -8,8 +8,17 @@
 export type ConversationMode = 'round-robin' | 'moderator' | 'dynamic';
 export type ConversationStatus = 'idle' | 'running' | 'paused' | 'completed';
 export type TurnState = 'planned' | 'running' | 'completed' | 'failed' | 'cancelled';
-export type MessageType = 'response' | 'summary' | 'interjection' | 'system';
+export type MessageType = 'response' | 'summary' | 'interjection' | 'system' | 'opening';
 export type ApiFormat = 'openai' | 'anthropic' | 'ollama';
+
+// Starting strategy types
+export type StartingStrategyId = 
+  | 'open-brainstorm'
+  | 'structured-debate'
+  | 'decision-matrix'
+  | 'problem-first'
+  | 'expert-deep-dive'
+  | 'devils-advocate';
 
 // Legacy type for backwards compatibility during migration
 export type LLMProviderType = 'openrouter' | 'ollama';
@@ -27,6 +36,10 @@ export interface Conversation {
   plainTextOnly: boolean;
   currentRound: number;
   maxRounds?: number;
+  // Starting strategy configuration
+  startingStrategy?: StartingStrategyId;
+  openingStatement?: string;
+  groundRules?: string;
   createdAt: number;
   updatedAt: number;
 }

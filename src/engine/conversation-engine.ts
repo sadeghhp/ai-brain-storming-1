@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.1.0
+// Version: 2.2.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -14,7 +14,8 @@ import { ConversationStateMachine } from './state-machine';
 import { conversationStorage, turnStorage, messageStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
-import type { Conversation, Turn, Message, ConversationStatus, ConversationMode } from '../types';
+import { selectFirstSpeaker, getStrategyById } from '../strategies/starting-strategies';
+import type { Conversation, Turn, Message, ConversationStatus, ConversationMode, StartingStrategyId } from '../types';
 
 export interface ConversationEngineOptions {
   onAgentThinking?: (agentId: string) => void;
@@ -405,9 +406,13 @@ export class ConversationEngine {
       plainTextOnly?: boolean;
       maxRounds?: number;
       includeSecretary?: boolean;
+      // Strategy configuration
+      startingStrategy?: StartingStrategyId;
+      openingStatement?: string;
+      groundRules?: string;
     } = {}
   ): Promise<ConversationEngine> {
-    // Create conversation
+    // Create conversation with strategy config
     const conversation = await conversationStorage.create({
       subject,
       goal,
@@ -416,6 +421,9 @@ export class ConversationEngine {
       maxContextTokens: options.maxContextTokens ?? 8000,
       plainTextOnly: options.plainTextOnly ?? false,
       maxRounds: options.maxRounds,
+      startingStrategy: options.startingStrategy,
+      openingStatement: options.openingStatement,
+      groundRules: options.groundRules,
     });
 
     // Create agents
@@ -431,7 +439,66 @@ export class ConversationEngine {
     const engine = new ConversationEngine(conversation);
     await engine.initialize();
 
+    // If strategy defines first speaker selection, apply it
+    if (options.startingStrategy) {
+      await engine.applyStrategyFirstSpeaker(subject);
+    }
+
+    // Create opening message if opening statement is provided
+    if (options.openingStatement) {
+      await engine.createOpeningMessage(options.openingStatement);
+    }
+
     return engine;
+  }
+
+  /**
+   * Apply strategy-based first speaker selection
+   */
+  private async applyStrategyFirstSpeaker(subject: string): Promise<void> {
+    if (!this.conversation.startingStrategy) return;
+
+    const strategy = getStrategyById(this.conversation.startingStrategy);
+    if (!strategy) return;
+
+    // Get non-secretary agents for first speaker selection
+    const participantAgents = this.agents
+      .filter(a => !a.entityData.isSecretary)
+      .map(a => ({
+        id: a.id,
+        expertise: a.entityData.expertise,
+        order: a.entityData.order,
+      }));
+
+    if (participantAgents.length === 0) return;
+
+    // Select first speaker based on strategy
+    const firstSpeakerId = selectFirstSpeaker(
+      strategy.firstSpeakerMethod,
+      participantAgents,
+      subject
+    );
+
+    if (firstSpeakerId && this.turnManager) {
+      // Queue the selected agent to speak first
+      this.turnManager.queueAgent(firstSpeakerId, `Strategy: ${strategy.name}`);
+      console.log(`[Engine] First speaker set by strategy: ${firstSpeakerId}`);
+    }
+  }
+
+  /**
+   * Create the opening system message for the conversation
+   */
+  private async createOpeningMessage(openingStatement: string): Promise<void> {
+    const message = await messageStorage.create({
+      conversationId: this.conversation.id,
+      content: openingStatement,
+      round: 0,
+      type: 'opening',
+    });
+
+    eventBus.emit('message:created', message);
+    console.log('[Engine] Opening message created');
   }
 
   /**

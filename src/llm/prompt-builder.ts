@@ -1,11 +1,12 @@
 // ============================================
 // AI Brainstorm - Prompt Builder
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import type { LLMMessage } from './types';
 import type { Agent, Message, Conversation, UserInterjection, Notebook } from '../types';
 import { countTokens, truncateMessagesToFit } from './token-counter';
+import { getStrategyById, getAgentInstructions } from '../strategies/starting-strategies';
 
 interface PromptContext {
   conversation: Conversation;
@@ -15,6 +16,7 @@ interface PromptContext {
   notebook?: Notebook;
   interjections: UserInterjection[];
   secretarySummary?: string;
+  isFirstTurn?: boolean;
 }
 
 /**
@@ -48,6 +50,19 @@ Your role is the SECRETARY. Your responsibilities:
     // Creativity guidance
     const creativityGuidance = getCreativityGuidance(agent.creativityLevel);
     parts.push(creativityGuidance);
+
+    // Strategy-specific instructions
+    if (conversation.startingStrategy) {
+      const strategyInstructions = getAgentInstructions(conversation.startingStrategy);
+      if (strategyInstructions) {
+        parts.push(`\nDiscussion approach: ${strategyInstructions}`);
+      }
+    }
+  }
+
+  // Ground rules if present
+  if (conversation.groundRules) {
+    parts.push(`\n${conversation.groundRules}`);
   }
 
   // Formatting rules
@@ -111,12 +126,21 @@ function getCreativityGuidance(level: number): string {
  */
 export function buildConversationMessages(context: PromptContext): LLMMessage[] {
   const messages: LLMMessage[] = [];
+  const isFirstTurn = context.isFirstTurn ?? (context.messages.length === 0);
 
   // System prompt
   messages.push({
     role: 'system',
     content: buildSystemPrompt(context.agent, context.conversation),
   });
+
+  // Add opening statement for first turn (high visibility context)
+  if (isFirstTurn && context.conversation.openingStatement) {
+    messages.push({
+      role: 'system',
+      content: `DISCUSSION CONTEXT:\n${context.conversation.openingStatement}`,
+    });
+  }
 
   // Add notebook context if available and agent uses it
   if (context.notebook && context.notebook.notes && context.agent.notebookUsage > 0) {
@@ -149,12 +173,18 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
     });
   }
 
-  // Add conversation messages
+  // Add conversation messages (including opening messages)
   for (const message of context.messages) {
     const sender = context.allAgents.find(a => a.id === message.agentId);
     const senderName = sender?.name || 'Unknown';
 
-    if (message.agentId === context.agent.id) {
+    // Handle opening messages (system-generated from strategy)
+    if (message.type === 'opening') {
+      messages.push({
+        role: 'system',
+        content: `[DISCUSSION OPENING]: ${message.content}`,
+      });
+    } else if (message.agentId === context.agent.id) {
       // This agent's own messages
       messages.push({
         role: 'assistant',
@@ -187,6 +217,49 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
     messages.push({
       role: 'user',
       content: 'Provide a brief summary of the key points discussed so far. Focus on decisions, insights, and action items.',
+    });
+  } else if (isFirstTurn) {
+    // Special prompt for first speaker
+    const strategy = context.conversation.startingStrategy 
+      ? getStrategyById(context.conversation.startingStrategy) 
+      : null;
+    
+    let firstTurnPrompt = `You are opening this discussion, ${context.agent.name}. `;
+    
+    if (strategy) {
+      switch (strategy.id) {
+        case 'open-brainstorm':
+          firstTurnPrompt += 'Start by sharing your initial ideas and thoughts freely. Encourage creative exploration.';
+          break;
+        case 'structured-debate':
+          firstTurnPrompt += 'Present your initial position on the topic with clear reasoning.';
+          break;
+        case 'decision-matrix':
+          firstTurnPrompt += 'Begin by identifying the key options or alternatives we should consider.';
+          break;
+        case 'problem-first':
+          firstTurnPrompt += 'Start by analyzing and defining the problem clearly before jumping to solutions.';
+          break;
+        case 'expert-deep-dive':
+          firstTurnPrompt += 'Provide your expert analysis and insights on the topic.';
+          break;
+        case 'devils-advocate':
+          firstTurnPrompt += 'Challenge the assumptions and conventional thinking around this topic.';
+          break;
+        default:
+          firstTurnPrompt += 'Share your perspective to kick off the discussion.';
+      }
+    } else {
+      firstTurnPrompt += 'Share your perspective to kick off the discussion.';
+    }
+    
+    if (otherAgentNames.length > 0) {
+      firstTurnPrompt += ` Other participants (${otherAgentNames.join(', ')}) will respond after you.`;
+    }
+    
+    messages.push({
+      role: 'user',
+      content: firstTurnPrompt,
     });
   } else if (otherAgentNames.length > 0) {
     messages.push({

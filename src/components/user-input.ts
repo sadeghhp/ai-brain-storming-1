@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - User Input Component
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { UserInterjectionHandler } from '../engine/user-interjection';
@@ -34,25 +34,44 @@ export class UserInput extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
+        /* Shadow DOM doesn't inherit global resets; add the essentials here. */
+        *, *::before, *::after {
+          box-sizing: border-box;
+        }
+
         :host {
+          --control-h: 44px;
           display: block;
           padding: var(--space-4) var(--space-6);
           background: var(--color-bg-secondary);
           border-top: 1px solid var(--color-border);
+          padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
         }
 
-        .input-container {
-          display: flex;
+        /* ------------------------------------------------
+           Main grid: 2 rows
+           Row 1 = input field + send button
+           Row 2 = footer (hint, counter, toggle)
+           ------------------------------------------------ */
+        .input-section {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) var(--control-h);
+          grid-template-rows: auto auto;
+          grid-template-areas:
+            "field  send"
+            "footer footer";
           gap: var(--space-3);
-          align-items: flex-end;
+          align-items: end;
         }
 
+        /* ---------- Row 1: Textarea ---------- */
         .input-wrapper {
-          flex: 1;
-          position: relative;
+          grid-area: field;
+          min-width: 0;
         }
 
         .input-field {
+          display: block;
           width: 100%;
           padding: var(--space-3) var(--space-4);
           background: var(--color-surface);
@@ -61,8 +80,9 @@ export class UserInput extends HTMLElement {
           color: var(--color-text-primary);
           font-family: inherit;
           font-size: var(--text-base);
+          line-height: 1.4;
           resize: none;
-          min-height: 44px;
+          min-height: var(--control-h);
           max-height: 120px;
           transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
         }
@@ -77,28 +97,15 @@ export class UserInput extends HTMLElement {
           color: var(--color-text-tertiary);
         }
 
-        .char-count {
-          position: absolute;
-          right: var(--space-3);
-          bottom: var(--space-2);
-          font-size: var(--text-xs);
-          color: var(--color-text-tertiary);
-        }
-
-        .char-count.warning {
-          color: var(--color-warning);
-        }
-
-        .char-count.error {
-          color: var(--color-error);
-        }
-
+        /* ---------- Row 1: Send Button ---------- */
         .send-btn {
+          grid-area: send;
+          align-self: end;
           display: flex;
           align-items: center;
           justify-content: center;
-          width: 44px;
-          height: 44px;
+          width: var(--control-h);
+          height: var(--control-h);
           background: var(--color-primary);
           border: none;
           border-radius: var(--radius-lg);
@@ -111,12 +118,57 @@ export class UserInput extends HTMLElement {
         .send-btn:hover:not(:disabled) {
           opacity: 0.9;
           transform: translateY(-1px);
+          box-shadow: 0 4px 12px var(--color-primary-dim);
         }
 
         .send-btn:disabled {
-          opacity: 0.5;
+          opacity: 0.4;
           cursor: not-allowed;
           transform: none;
+        }
+
+        .send-btn svg {
+          width: 20px;
+          height: 20px;
+        }
+
+        /* ---------- Row 2: Footer ---------- */
+        .input-footer {
+          grid-area: footer;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--space-4);
+          padding: 0 var(--space-1);
+          flex-wrap: wrap;
+        }
+
+        .hint {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+        }
+
+        .footer-right {
+          display: flex;
+          align-items: center;
+          gap: var(--space-4);
+          margin-left: auto;
+        }
+
+        .char-count {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+
+        .char-count.warning {
+          color: var(--color-warning);
+        }
+
+        .char-count.error {
+          color: var(--color-error);
+          font-weight: 500;
         }
 
         .mode-toggle {
@@ -125,29 +177,43 @@ export class UserInput extends HTMLElement {
           gap: var(--space-2);
           font-size: var(--text-xs);
           color: var(--color-text-tertiary);
+          cursor: pointer;
+          user-select: none;
+        }
+
+        .mode-toggle:hover {
+          color: var(--color-text-secondary);
         }
 
         .mode-toggle input[type="checkbox"] {
-          width: 16px;
-          height: 16px;
+          width: 14px;
+          height: 14px;
           accent-color: var(--color-primary);
+          cursor: pointer;
         }
 
-        .input-footer {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-top: var(--space-2);
-          padding: 0 var(--space-1);
-        }
+        /* ---------- Responsive ---------- */
+        @media (max-width: 480px) {
+          :host {
+            padding-left: var(--space-4);
+            padding-right: var(--space-4);
+          }
 
-        .hint {
-          font-size: var(--text-xs);
-          color: var(--color-text-tertiary);
+          .input-footer {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: var(--space-2);
+          }
+
+          .footer-right {
+            width: 100%;
+            justify-content: space-between;
+            margin-left: 0;
+          }
         }
       </style>
 
-      <div class="input-container">
+      <div class="input-section">
         <div class="input-wrapper">
           <textarea 
             class="input-field" 
@@ -156,22 +222,25 @@ export class UserInput extends HTMLElement {
             rows="1"
             maxlength="2000"
           ></textarea>
-          <span class="char-count" id="char-count">0 / 2000</span>
         </div>
+
         <button class="send-btn" id="send-btn" disabled title="Send (Ctrl+Enter)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="22" y1="2" x2="11" y2="13"/>
             <polygon points="22 2 15 22 11 13 2 9 22 2"/>
           </svg>
         </button>
-      </div>
 
-      <div class="input-footer">
-        <span class="hint">Press Ctrl+Enter to send</span>
-        <label class="mode-toggle">
-          <input type="checkbox" id="immediate-mode">
-          Immediate (interrupt current turn)
-        </label>
+        <div class="input-footer">
+          <span class="hint">Press Ctrl+Enter to send</span>
+          <div class="footer-right">
+            <span class="char-count" id="char-count">0 / 2000</span>
+            <label class="mode-toggle">
+              <input type="checkbox" id="immediate-mode">
+              Immediate (interrupt current turn)
+            </label>
+          </div>
+        </div>
       </div>
     `;
 
@@ -241,4 +310,3 @@ export class UserInput extends HTMLElement {
 }
 
 customElements.define('user-input', UserInput);
-

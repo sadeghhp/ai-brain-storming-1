@@ -5,9 +5,8 @@
 
 import { presetStorage, providerStorage } from '../storage/storage-manager';
 import { presetCategories } from '../agents/presets';
-import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
-import type { Agent, AgentPreset, LLMProvider, CreateAgent } from '../types';
+import type { Agent, AgentPreset, LLMProvider } from '../types';
 
 export interface AgentEditorConfig {
   mode: 'create' | 'edit';
@@ -55,9 +54,16 @@ export class AgentEditorModal extends HTMLElement {
   }
 
   attributeChangedCallback(name: string, _oldValue: string, newValue: string) {
-    if (name === 'open' && newValue === 'true') {
+    if (name !== 'open') return;
+
+    // Always re-render on open state changes so the overlay visibility updates.
+    // Only reload data when opening.
+    if (newValue === 'true') {
       this.loadData().then(() => this.render());
+      return;
     }
+
+    this.render();
   }
 
   configure(config: AgentEditorConfig) {
@@ -231,6 +237,8 @@ export class AgentEditorModal extends HTMLElement {
           width: 100%;
           max-width: 720px;
           max-height: 90vh;
+          /* Better behavior on mobile browsers with dynamic address bars */
+          max-height: 90svh;
           display: flex;
           flex-direction: column;
           overflow: hidden;
@@ -239,6 +247,14 @@ export class AgentEditorModal extends HTMLElement {
             0 0 0 1px rgba(255, 255, 255, 0.05),
             0 20px 50px -10px rgba(0, 0, 0, 0.5),
             0 0 80px -20px var(--color-primary-dim);
+        }
+
+        /* Keep footer visible: make the form a flex container so the body can scroll. */
+        .modal-form {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-height: 0;
         }
 
         @keyframes scaleIn {
@@ -294,6 +310,7 @@ export class AgentEditorModal extends HTMLElement {
           overflow-x: hidden;
           flex: 1;
           min-height: 0;
+          -webkit-overflow-scrolling: touch;
         }
 
         .section {
@@ -563,6 +580,7 @@ export class AgentEditorModal extends HTMLElement {
           border-top: 1px solid var(--color-border);
           background: var(--color-bg-secondary);
           flex-shrink: 0;
+          padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
         }
 
         .btn {
@@ -640,6 +658,42 @@ export class AgentEditorModal extends HTMLElement {
         .collapsible-content.expanded {
           display: block;
         }
+
+        @media (max-width: 480px) {
+          .modal-overlay {
+            padding: var(--space-2);
+          }
+
+          .modal-header,
+          .modal-footer {
+            padding-left: var(--space-4);
+            padding-right: var(--space-4);
+          }
+
+          .modal-body {
+            padding: var(--space-4);
+          }
+
+          .form-row,
+          .llm-row {
+            grid-template-columns: 1fr;
+          }
+
+          .modal-footer {
+            flex-direction: column-reverse;
+            align-items: stretch;
+          }
+
+          .modal-footer .btn {
+            width: 100%;
+            /* Ensure full-width behavior across browsers/layout contexts */
+            display: flex;
+          }
+
+          .preset-selector {
+            max-height: 220px;
+          }
+        }
       </style>
 
       <div class="modal-overlay">
@@ -654,7 +708,7 @@ export class AgentEditorModal extends HTMLElement {
             </button>
           </div>
 
-          <form id="agent-form">
+          <form id="agent-form" class="modal-form">
             <div class="modal-body">
               <!-- Start from Preset -->
               <div class="section">

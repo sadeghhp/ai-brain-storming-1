@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Turn Executor
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -158,6 +158,10 @@ export class TurnExecutor {
     // Get notebook
     const notebook = await notebookStorage.get(agent.id);
 
+    // Determine if this is the first turn (no agent responses yet)
+    const agentResponses = messages.filter(m => m.type === 'response');
+    const isFirstTurn = agentResponses.length === 0;
+
     // Build context using the prompt builder
     const context = buildConversationMessages({
       conversation: this.conversation,
@@ -166,6 +170,7 @@ export class TurnExecutor {
       messages,
       notebook: notebook || undefined,
       interjections,
+      isFirstTurn,
     });
 
     return context;
