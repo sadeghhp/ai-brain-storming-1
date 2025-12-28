@@ -16,7 +16,6 @@ export class ConversationSettingsModal extends HTMLElement {
   private agents: Agent[] = [];
   private providers: LLMProvider[] = [];
   private activeTab: 'general' | 'agents' = 'general';
-  private editingAgentId: string | null = null;
 
   static get observedAttributes() {
     return ['open', 'conversation-id'];
@@ -32,9 +31,17 @@ export class ConversationSettingsModal extends HTMLElement {
   }
 
   attributeChangedCallback(name: string, _oldValue: string, newValue: string) {
-    if (name === 'open' && newValue === 'true') {
-      this.loadData().then(() => this.render());
-    } else if (name === 'conversation-id' && newValue) {
+    if (name === 'open') {
+      // Always re-render on open state changes so the overlay display updates immediately.
+      if (newValue === 'true') {
+        this.loadData().then(() => this.render());
+      } else {
+        this.render();
+      }
+      return;
+    }
+
+    if (name === 'conversation-id' && newValue) {
       this.loadData().then(() => this.render());
     }
   }
@@ -50,7 +57,6 @@ export class ConversationSettingsModal extends HTMLElement {
 
   private close() {
     this.setAttribute('open', 'false');
-    this.editingAgentId = null;
   }
 
   private isEditable(): boolean {
@@ -680,8 +686,8 @@ export class ConversationSettingsModal extends HTMLElement {
 
     return `
       <div class="agent-list">
-        ${regularAgents.map((agent, index) => this.renderAgentCard(agent, index)).join('')}
-        ${secretary ? this.renderAgentCard(secretary, regularAgents.length) : ''}
+        ${regularAgents.map((agent) => this.renderAgentCard(agent)).join('')}
+        ${secretary ? this.renderAgentCard(secretary) : ''}
       </div>
 
       <button type="button" class="add-agent-btn" id="add-agent-btn" ${!editable ? 'disabled' : ''}>
@@ -694,7 +700,7 @@ export class ConversationSettingsModal extends HTMLElement {
     `;
   }
 
-  private renderAgentCard(agent: Agent, index: number): string {
+  private renderAgentCard(agent: Agent): string {
     const provider = this.providers.find(p => p.id === agent.llmProviderId);
     const model = provider?.models.find(m => m.id === agent.modelId);
     const initials = agent.name.slice(0, 2).toUpperCase();
@@ -815,9 +821,9 @@ export class ConversationSettingsModal extends HTMLElement {
 
     // Agent editor events
     const agentEditor = this.shadowRoot?.getElementById('agent-editor') as AgentEditorModal;
-    agentEditor?.addEventListener('agent:saved', (async (e: CustomEvent) => {
-      const { result, mode, agentId } = e.detail as { 
-        result: AgentEditorResult; 
+    agentEditor?.addEventListener('agent:saved', async (e: Event) => {
+      const { result, mode, agentId } = (e as CustomEvent).detail as {
+        result: AgentEditorResult;
         mode: string;
         agentId?: string;
       };
@@ -853,10 +859,9 @@ export class ConversationSettingsModal extends HTMLElement {
         });
       }
 
-      this.editingAgentId = null;
       await this.loadData();
       this.render();
-    }) as EventListener);
+    });
 
     // Save button
     this.shadowRoot?.getElementById('save-btn')?.addEventListener('click', async () => {
@@ -873,7 +878,6 @@ export class ConversationSettingsModal extends HTMLElement {
     if (agentId) {
       const agent = this.agents.find(a => a.id === agentId);
       if (agent) {
-        this.editingAgentId = agentId;
         agentEditor.configure({
           mode: 'edit',
           agent: agent,
@@ -881,7 +885,6 @@ export class ConversationSettingsModal extends HTMLElement {
         });
       }
     } else {
-      this.editingAgentId = null;
       agentEditor.configure({
         mode: 'create',
         agent: {
