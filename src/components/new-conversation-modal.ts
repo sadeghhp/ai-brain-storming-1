@@ -11,7 +11,7 @@ import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { startingStrategies, getStrategyById, buildOpeningStatement, buildGroundRules } from '../strategies/starting-strategies';
 import { conversationTemplates, templateCategories, getTemplateById } from '../strategies/conversation-templates';
-import { ALL_LANGUAGES, getEnabledLanguages, type Language } from '../utils/languages';
+import { getEnabledLanguages, type Language } from '../utils/languages';
 import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId, ConversationDepth, AppSettings } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
@@ -65,7 +65,7 @@ export class NewConversationModal extends HTMLElement {
   private selectedLanguage: string = '';
   // Enabled languages from settings
   private enabledLanguages: Language[] = getEnabledLanguages(['']);
-  private settingsUpdateHandler: ((settings: AppSettings) => void) | null = null;
+  private settingsUnsubscribe: (() => void) | null = null;
 
   static get observedAttributes() {
     return ['open'];
@@ -81,21 +81,25 @@ export class NewConversationModal extends HTMLElement {
     this.render();
     
     // Listen for settings updates to refresh enabled languages
-    this.settingsUpdateHandler = (settings: AppSettings) => {
+    if (this.settingsUnsubscribe) {
+      this.settingsUnsubscribe();
+      this.settingsUnsubscribe = null;
+    }
+
+    this.settingsUnsubscribe = eventBus.on('settings:updated', (settings: AppSettings) => {
       this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
       // Re-render only if modal is open
       if (this.getAttribute('open') === 'true') {
         this.render();
       }
-    };
-    eventBus.on('settings:updated', this.settingsUpdateHandler);
+    });
   }
   
   disconnectedCallback() {
     // Clean up event listener
-    if (this.settingsUpdateHandler) {
-      eventBus.off('settings:updated', this.settingsUpdateHandler);
-      this.settingsUpdateHandler = null;
+    if (this.settingsUnsubscribe) {
+      this.settingsUnsubscribe();
+      this.settingsUnsubscribe = null;
     }
   }
 

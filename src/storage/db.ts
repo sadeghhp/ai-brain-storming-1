@@ -125,6 +125,7 @@ export async function initializeDatabase(): Promise<void> {
       defaultPlainTextOnly: false,
       showKeyboardShortcuts: true,
       autoScrollMessages: true,
+      enabledLanguages: ['', 'Persian'],
     });
   }
 

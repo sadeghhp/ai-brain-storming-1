@@ -22,6 +22,205 @@ CRITICAL RULES:
 - Report observations objectively: "Agent A argued that..." rather than "Agent A correctly pointed out..."
 - Identify patterns and areas of agreement/disagreement OBJECTIVELY`;
 
+type RoundDecisionFallbackKind = 'noMessages' | 'analysisComplete' | 'parseFail' | 'analysisFailed';
+
+const ROUND_DECISION_FALLBACKS: Record<
+  string,
+  {
+    noMessages: (round: number, rounds: number) => string;
+    analysisComplete: () => string;
+    parseFail: (rounds: number) => string;
+    analysisFailed: (rounds: number) => string;
+  }
+> = {
+  '': {
+    noMessages: (round, rounds) => `No messages in round ${round}; defaulting to ${rounds} rounds.`,
+    analysisComplete: () => 'Analysis complete.',
+    parseFail: (rounds) => `Unable to parse analysis; defaulting to ${rounds} rounds.`,
+    analysisFailed: (rounds) => `Analysis failed; defaulting to ${rounds} rounds.`,
+  },
+  Persian: {
+    noMessages: (round, rounds) => `هیچ پیامی در دور ${round} وجود ندارد؛ پیش‌فرض را ${rounds} دور در نظر می‌گیرم.`,
+    analysisComplete: () => 'تحلیل انجام شد.',
+    parseFail: (rounds) => `امکان پردازش خروجی تحلیل نبود؛ پیش‌فرض را ${rounds} دور در نظر می‌گیرم.`,
+    analysisFailed: (rounds) => `تحلیل با خطا مواجه شد؛ پیش‌فرض را ${rounds} دور در نظر می‌گیرم.`,
+  },
+  Spanish: {
+    noMessages: (round, rounds) => `No hay mensajes en la ronda ${round}; usando ${rounds} rondas por defecto.`,
+    analysisComplete: () => 'Análisis completado.',
+    parseFail: (rounds) => `No se pudo interpretar el análisis; usando ${rounds} rondas por defecto.`,
+    analysisFailed: (rounds) => `El análisis falló; usando ${rounds} rondas por defecto.`,
+  },
+  French: {
+    noMessages: (round, rounds) => `Aucun message au tour ${round} ; ${rounds} tours par défaut.`,
+    analysisComplete: () => 'Analyse terminée.',
+    parseFail: (rounds) => `Impossible d’interpréter l’analyse ; ${rounds} tours par défaut.`,
+    analysisFailed: (rounds) => `L’analyse a échoué ; ${rounds} tours par défaut.`,
+  },
+  German: {
+    noMessages: (round, rounds) => `Keine Nachrichten in Runde ${round}; standardmäßig ${rounds} Runden.`,
+    analysisComplete: () => 'Analyse abgeschlossen.',
+    parseFail: (rounds) => `Analyse konnte nicht geparst werden; standardmäßig ${rounds} Runden.`,
+    analysisFailed: (rounds) => `Analyse fehlgeschlagen; standardmäßig ${rounds} Runden.`,
+  },
+  Italian: {
+    noMessages: (round, rounds) => `Nessun messaggio nel round ${round}; impostazione predefinita: ${rounds} round.`,
+    analysisComplete: () => 'Analisi completata.',
+    parseFail: (rounds) => `Impossibile interpretare l’analisi; impostazione predefinita: ${rounds} round.`,
+    analysisFailed: (rounds) => `Analisi non riuscita; impostazione predefinita: ${rounds} round.`,
+  },
+  Portuguese: {
+    noMessages: (round, rounds) => `Sem mensagens na rodada ${round}; usando ${rounds} rodadas por padrão.`,
+    analysisComplete: () => 'Análise concluída.',
+    parseFail: (rounds) => `Não foi possível interpretar a análise; usando ${rounds} rodadas por padrão.`,
+    analysisFailed: (rounds) => `Falha na análise; usando ${rounds} rodadas por padrão.`,
+  },
+  Dutch: {
+    noMessages: (round, rounds) => `Geen berichten in ronde ${round}; standaard ${rounds} rondes.`,
+    analysisComplete: () => 'Analyse voltooid.',
+    parseFail: (rounds) => `Kon de analyse niet verwerken; standaard ${rounds} rondes.`,
+    analysisFailed: (rounds) => `Analyse mislukt; standaard ${rounds} rondes.`,
+  },
+  Russian: {
+    noMessages: (round, rounds) => `В раунде ${round} нет сообщений; по умолчанию ${rounds} раундов.`,
+    analysisComplete: () => 'Анализ завершён.',
+    parseFail: (rounds) => `Не удалось разобрать анализ; по умолчанию ${rounds} раундов.`,
+    analysisFailed: (rounds) => `Анализ не удался; по умолчанию ${rounds} раундов.`,
+  },
+  'Chinese (Simplified)': {
+    noMessages: (round, rounds) => `第${round}轮没有消息；默认使用${rounds}轮。`,
+    analysisComplete: () => '分析完成。',
+    parseFail: (rounds) => `无法解析分析结果；默认使用${rounds}轮。`,
+    analysisFailed: (rounds) => `分析失败；默认使用${rounds}轮。`,
+  },
+  'Chinese (Traditional)': {
+    noMessages: (round, rounds) => `第${round}輪沒有訊息；預設使用${rounds}輪。`,
+    analysisComplete: () => '分析完成。',
+    parseFail: (rounds) => `無法解析分析結果；預設使用${rounds}輪。`,
+    analysisFailed: (rounds) => `分析失敗；預設使用${rounds}輪。`,
+  },
+  Japanese: {
+    noMessages: (round, rounds) => `${round}ラウンドにメッセージがありません。既定で${rounds}ラウンドにします。`,
+    analysisComplete: () => '分析が完了しました。',
+    parseFail: (rounds) => `分析結果を解析できませんでした。既定で${rounds}ラウンドにします。`,
+    analysisFailed: (rounds) => `分析に失敗しました。既定で${rounds}ラウンドにします。`,
+  },
+  Korean: {
+    noMessages: (round, rounds) => `${round}라운드에 메시지가 없습니다. 기본값으로 ${rounds}라운드를 사용합니다.`,
+    analysisComplete: () => '분석이 완료되었습니다.',
+    parseFail: (rounds) => `분석 결과를 해석할 수 없습니다. 기본값으로 ${rounds}라운드를 사용합니다.`,
+    analysisFailed: (rounds) => `분석에 실패했습니다. 기본값으로 ${rounds}라운드를 사용합니다.`,
+  },
+  Arabic: {
+    noMessages: (round, rounds) => `لا توجد رسائل في الجولة ${round}؛ سيتم اعتماد ${rounds} جولات افتراضيًا.`,
+    analysisComplete: () => 'اكتمل التحليل.',
+    parseFail: (rounds) => `تعذّر تفسير التحليل؛ سيتم اعتماد ${rounds} جولات افتراضيًا.`,
+    analysisFailed: (rounds) => `فشل التحليل؛ سيتم اعتماد ${rounds} جولات افتراضيًا.`,
+  },
+  Hindi: {
+    noMessages: (round, rounds) => `${round} राउंड में कोई संदेश नहीं है; डिफ़ॉल्ट रूप से ${rounds} राउंड चुने गए हैं।`,
+    analysisComplete: () => 'विश्लेषण पूरा हुआ।',
+    parseFail: (rounds) => `विश्लेषण को पार्स नहीं किया जा सका; डिफ़ॉल्ट रूप से ${rounds} राउंड चुने गए हैं।`,
+    analysisFailed: (rounds) => `विश्लेषण विफल हुआ; डिफ़ॉल्ट रूप से ${rounds} राउंड चुने गए हैं।`,
+  },
+  Turkish: {
+    noMessages: (round, rounds) => `${round}. turda mesaj yok; varsayılan olarak ${rounds} tur seçildi.`,
+    analysisComplete: () => 'Analiz tamamlandı.',
+    parseFail: (rounds) => `Analiz çözümlenemedi; varsayılan olarak ${rounds} tur seçildi.`,
+    analysisFailed: (rounds) => `Analiz başarısız oldu; varsayılan olarak ${rounds} tur seçildi.`,
+  },
+  Polish: {
+    noMessages: (round, rounds) => `Brak wiadomości w rundzie ${round}; domyślnie ${rounds} rundy.`,
+    analysisComplete: () => 'Analiza zakończona.',
+    parseFail: (rounds) => `Nie udało się sparsować analizy; domyślnie ${rounds} rundy.`,
+    analysisFailed: (rounds) => `Analiza nie powiodła się; domyślnie ${rounds} rundy.`,
+  },
+  Swedish: {
+    noMessages: (round, rounds) => `Inga meddelanden i runda ${round}; använder ${rounds} rundor som standard.`,
+    analysisComplete: () => 'Analysen är klar.',
+    parseFail: (rounds) => `Kunde inte tolka analysen; använder ${rounds} rundor som standard.`,
+    analysisFailed: (rounds) => `Analysen misslyckades; använder ${rounds} rundor som standard.`,
+  },
+  Norwegian: {
+    noMessages: (round, rounds) => `Ingen meldinger i runde ${round}; bruker ${rounds} runder som standard.`,
+    analysisComplete: () => 'Analysen er fullført.',
+    parseFail: (rounds) => `Kunne ikke tolke analysen; bruker ${rounds} runder som standard.`,
+    analysisFailed: (rounds) => `Analysen mislyktes; bruker ${rounds} runder som standard.`,
+  },
+  Danish: {
+    noMessages: (round, rounds) => `Ingen beskeder i runde ${round}; bruger ${rounds} runder som standard.`,
+    analysisComplete: () => 'Analysen er fuldført.',
+    parseFail: (rounds) => `Kunne ikke fortolke analysen; bruger ${rounds} runder som standard.`,
+    analysisFailed: (rounds) => `Analysen mislykkedes; bruger ${rounds} runder som standard.`,
+  },
+  Finnish: {
+    noMessages: (round, rounds) => `Ei viestejä kierroksella ${round}; käytetään oletuksena ${rounds} kierrosta.`,
+    analysisComplete: () => 'Analyysi valmis.',
+    parseFail: (rounds) => `Analyysiä ei voitu jäsentää; käytetään oletuksena ${rounds} kierrosta.`,
+    analysisFailed: (rounds) => `Analyysi epäonnistui; käytetään oletuksena ${rounds} kierrosta.`,
+  },
+  Greek: {
+    noMessages: (round, rounds) => `Δεν υπάρχουν μηνύματα στον γύρο ${round}; προεπιλογή ${rounds} γύροι.`,
+    analysisComplete: () => 'Η ανάλυση ολοκληρώθηκε.',
+    parseFail: (rounds) => `Δεν ήταν δυνατή η ερμηνεία του αποτελέσματος· προεπιλογή ${rounds} γύροι.`,
+    analysisFailed: (rounds) => `Η ανάλυση απέτυχε· προεπιλογή ${rounds} γύροι.`,
+  },
+  Hebrew: {
+    noMessages: (round, rounds) => `אין הודעות בסבב ${round}; ברירת מחדל: ${rounds} סבבים.`,
+    analysisComplete: () => 'הניתוח הושלם.',
+    parseFail: (rounds) => `לא ניתן היה לפרש את הניתוח; ברירת מחדל: ${rounds} סבבים.`,
+    analysisFailed: (rounds) => `הניתוח נכשל; ברירת מחדל: ${rounds} סבבים.`,
+  },
+  Thai: {
+    noMessages: (round, rounds) => `ไม่มีข้อความในรอบที่ ${round}; ใช้ค่าเริ่มต้นเป็น ${rounds} รอบ`,
+    analysisComplete: () => 'การวิเคราะห์เสร็จสิ้น',
+    parseFail: (rounds) => `ไม่สามารถแยกวิเคราะห์ผลได้; ใช้ค่าเริ่มต้นเป็น ${rounds} รอบ`,
+    analysisFailed: (rounds) => `การวิเคราะห์ล้มเหลว; ใช้ค่าเริ่มต้นเป็น ${rounds} รอบ`,
+  },
+  Vietnamese: {
+    noMessages: (round, rounds) => `Không có tin nhắn ở vòng ${round}; mặc định chọn ${rounds} vòng.`,
+    analysisComplete: () => 'Phân tích hoàn tất.',
+    parseFail: (rounds) => `Không thể phân tích kết quả; mặc định chọn ${rounds} vòng.`,
+    analysisFailed: (rounds) => `Phân tích thất bại; mặc định chọn ${rounds} vòng.`,
+  },
+  Indonesian: {
+    noMessages: (round, rounds) => `Tidak ada pesan pada ronde ${round}; default menggunakan ${rounds} ronde.`,
+    analysisComplete: () => 'Analisis selesai.',
+    parseFail: (rounds) => `Tidak dapat mengurai analisis; default menggunakan ${rounds} ronde.`,
+    analysisFailed: (rounds) => `Analisis gagal; default menggunakan ${rounds} ronde.`,
+  },
+  Czech: {
+    noMessages: (round, rounds) => `V kole ${round} nejsou žádné zprávy; výchozí je ${rounds} kol.`,
+    analysisComplete: () => 'Analýza dokončena.',
+    parseFail: (rounds) => `Nepodařilo se zpracovat analýzu; výchozí je ${rounds} kol.`,
+    analysisFailed: (rounds) => `Analýza selhala; výchozí je ${rounds} kol.`,
+  },
+  Hungarian: {
+    noMessages: (round, rounds) => `Nincs üzenet a(z) ${round}. körben; alapértelmezés: ${rounds} kör.`,
+    analysisComplete: () => 'Az elemzés elkészült.',
+    parseFail: (rounds) => `Nem sikerült értelmezni az elemzést; alapértelmezés: ${rounds} kör.`,
+    analysisFailed: (rounds) => `Az elemzés sikertelen; alapértelmezés: ${rounds} kör.`,
+  },
+  Romanian: {
+    noMessages: (round, rounds) => `Nu există mesaje în runda ${round}; implicit ${rounds} runde.`,
+    analysisComplete: () => 'Analiza este completă.',
+    parseFail: (rounds) => `Nu s-a putut interpreta analiza; implicit ${rounds} runde.`,
+    analysisFailed: (rounds) => `Analiza a eșuat; implicit ${rounds} runde.`,
+  },
+  Ukrainian: {
+    noMessages: (round, rounds) => `У раунді ${round} немає повідомлень; за замовчуванням ${rounds} раундів.`,
+    analysisComplete: () => 'Аналіз завершено.',
+    parseFail: (rounds) => `Не вдалося розібрати аналіз; за замовчуванням ${rounds} раундів.`,
+    analysisFailed: (rounds) => `Аналіз не вдався; за замовчуванням ${rounds} раундів.`,
+  },
+  Bengali: {
+    noMessages: (round, rounds) => `রাউন্ড ${round}-এ কোনো বার্তা নেই; ডিফল্টভাবে ${rounds} রাউন্ড নির্ধারণ করা হলো।`,
+    analysisComplete: () => 'বিশ্লেষণ সম্পন্ন।',
+    parseFail: (rounds) => `বিশ্লেষণ পার্স করা যায়নি; ডিফল্টভাবে ${rounds} রাউন্ড নির্ধারণ করা হলো।`,
+    analysisFailed: (rounds) => `বিশ্লেষণ ব্যর্থ হয়েছে; ডিফল্টভাবে ${rounds} রাউন্ড নির্ধারণ করা হলো।`,
+  },
+};
+
 /**
  * Secretary Agent
  * Specialized agent that:
@@ -48,6 +247,31 @@ export class SecretaryAgent {
 
   get name(): string {
     return this.agent.name;
+  }
+
+  private getRoundDecisionFallbackReasoning(params: {
+    targetLanguage?: string;
+    kind: RoundDecisionFallbackKind;
+    completedRound?: number;
+    rounds: number;
+  }): string {
+    const key = (params.targetLanguage ?? '').trim();
+    const pack = ROUND_DECISION_FALLBACKS[key] ?? ROUND_DECISION_FALLBACKS[''];
+
+    switch (params.kind) {
+      case 'noMessages': {
+        const round = params.completedRound ?? 1;
+        return pack.noMessages(round, params.rounds);
+      }
+      case 'analysisComplete':
+        return pack.analysisComplete();
+      case 'parseFail':
+        return pack.parseFail(params.rounds);
+      case 'analysisFailed':
+        return pack.analysisFailed(params.rounds);
+      default:
+        return ROUND_DECISION_FALLBACKS[''].analysisFailed(params.rounds);
+    }
   }
 
   /**
@@ -152,10 +376,15 @@ Keep it concise (2-4 paragraphs). Other participants will see this summary befor
     const messages = await messageStorage.getByRound(this.conversationId, completedRound);
     
     if (messages.length === 0) {
+      const recommendedRounds = 3;
       return { 
-        recommendedRounds: 3, 
-        // Avoid hardcoded English when a target language is configured.
-        reasoning: targetLanguage ? '' : `No messages in round ${completedRound}; defaulting to 3 rounds.` 
+        recommendedRounds,
+        reasoning: this.getRoundDecisionFallbackReasoning({
+          targetLanguage,
+          kind: 'noMessages',
+          completedRound,
+          rounds: recommendedRounds,
+        }),
       };
     }
 
@@ -210,26 +439,44 @@ No other text outside the JSON.`,
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         const rounds = Math.min(10, Math.max(2, parseInt(parsed.recommendedRounds, 10) || 5));
+        const reasoning =
+          typeof parsed.reasoning === 'string' && parsed.reasoning.trim()
+            ? parsed.reasoning.trim()
+            : this.getRoundDecisionFallbackReasoning({
+                targetLanguage,
+                kind: 'analysisComplete',
+                completedRound,
+                rounds,
+              });
         return {
           recommendedRounds: rounds,
-          // Avoid hardcoded English when a target language is configured.
-          reasoning: parsed.reasoning || (targetLanguage ? '' : 'Analysis complete.'),
+          reasoning,
         };
       }
 
       // Fallback if parsing fails
-      return { 
-        recommendedRounds: 5, 
-        // Avoid hardcoded English when a target language is configured.
-        reasoning: targetLanguage ? '' : 'Unable to parse analysis; defaulting to 5 rounds.' 
+      const recommendedRounds = 5;
+      return {
+        recommendedRounds,
+        reasoning: this.getRoundDecisionFallbackReasoning({
+          targetLanguage,
+          kind: 'parseFail',
+          completedRound,
+          rounds: recommendedRounds,
+        }),
       };
     } catch (error) {
       this.agent.setStatus('idle');
       console.error('[Secretary] Failed to analyze and decide rounds:', error);
-      return { 
-        recommendedRounds: 5, 
-        // Avoid hardcoded English when a target language is configured.
-        reasoning: targetLanguage ? '' : 'Analysis failed; defaulting to 5 rounds.' 
+      const recommendedRounds = 5;
+      return {
+        recommendedRounds,
+        reasoning: this.getRoundDecisionFallbackReasoning({
+          targetLanguage,
+          kind: 'analysisFailed',
+          completedRound,
+          rounds: recommendedRounds,
+        }),
       };
     }
   }

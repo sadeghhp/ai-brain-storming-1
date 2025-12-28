@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Language Constants
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 /**
@@ -18,6 +18,7 @@ export interface Language {
  */
 export const ALL_LANGUAGES: Language[] = [
   { code: '', name: 'Default (English)', nativeName: 'English' },
+  { code: 'Persian', name: 'Persian', nativeName: 'فارسی' },
   { code: 'Spanish', name: 'Spanish', nativeName: 'Español' },
   { code: 'French', name: 'French', nativeName: 'Français' },
   { code: 'German', name: 'German', nativeName: 'Deutsch' },
@@ -47,7 +48,6 @@ export const ALL_LANGUAGES: Language[] = [
   { code: 'Romanian', name: 'Romanian', nativeName: 'Română' },
   { code: 'Ukrainian', name: 'Ukrainian', nativeName: 'Українська' },
   { code: 'Bengali', name: 'Bengali', nativeName: 'বাংলা' },
-  { code: 'Persian', name: 'Persian', nativeName: 'فارسی' },
 ];
 
 /**

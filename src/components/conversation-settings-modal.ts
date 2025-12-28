@@ -29,7 +29,7 @@ export class ConversationSettingsModal extends HTMLElement {
   private activeTab: 'general' | 'agents' = 'general';
   // Enabled languages from settings
   private enabledLanguages: Language[] = getEnabledLanguages(['']);
-  private settingsUpdateHandler: ((settings: AppSettings) => void) | null = null;
+  private settingsUnsubscribe: (() => void) | null = null;
 
   static get observedAttributes() {
     return ['open', 'conversation-id'];
@@ -44,21 +44,25 @@ export class ConversationSettingsModal extends HTMLElement {
     this.render();
     
     // Listen for settings updates to refresh enabled languages
-    this.settingsUpdateHandler = (settings: AppSettings) => {
+    if (this.settingsUnsubscribe) {
+      this.settingsUnsubscribe();
+      this.settingsUnsubscribe = null;
+    }
+
+    this.settingsUnsubscribe = eventBus.on('settings:updated', (settings: AppSettings) => {
       this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
       // Re-render only if modal is open
       if (this.getAttribute('open') === 'true') {
         this.render();
       }
-    };
-    eventBus.on('settings:updated', this.settingsUpdateHandler);
+    });
   }
   
   disconnectedCallback() {
     // Clean up event listener
-    if (this.settingsUpdateHandler) {
-      eventBus.off('settings:updated', this.settingsUpdateHandler);
-      this.settingsUpdateHandler = null;
+    if (this.settingsUnsubscribe) {
+      this.settingsUnsubscribe();
+      this.settingsUnsubscribe = null;
     }
   }
 

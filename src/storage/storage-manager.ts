@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Storage Manager
-// Version: 2.0.0
+// Version: 2.1.0
 // ============================================
 
 import { v4 as uuidv4 } from 'uuid';
@@ -660,7 +660,7 @@ export const settingsStorage = {
         defaultPlainTextOnly: false,
         showKeyboardShortcuts: true,
         autoScrollMessages: true,
-        enabledLanguages: [''], // Default: English only (empty string = English)
+        enabledLanguages: ['', 'Persian'], // Default: English + Persian (empty string = English)
       };
     }
     // Ensure enabledLanguages exists for older stored settings
