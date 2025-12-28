@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Base LLM Provider
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
 import type {
@@ -11,16 +11,31 @@ import type {
   LLMProviderConfig,
   LLMError,
 } from '../types';
+import type { ApiFormat, ProviderModel } from '../../types';
+
+/**
+ * Extended provider config with user-defined models
+ */
+export interface ExtendedProviderConfig extends LLMProviderConfig {
+  autoFetchModels: boolean;
+  userModels: ProviderModel[];
+}
 
 /**
  * Abstract base class for LLM providers
  */
 export abstract class BaseLLMProvider {
   protected config: LLMProviderConfig;
+  protected extendedConfig: ExtendedProviderConfig;
   protected abortController: AbortController | null = null;
 
-  constructor(config: LLMProviderConfig) {
+  constructor(config: LLMProviderConfig, extendedConfig?: Partial<ExtendedProviderConfig>) {
     this.config = config;
+    this.extendedConfig = {
+      ...config,
+      autoFetchModels: extendedConfig?.autoFetchModels ?? true,
+      userModels: extendedConfig?.userModels ?? [],
+    };
   }
 
   /**
@@ -29,9 +44,9 @@ export abstract class BaseLLMProvider {
   abstract get name(): string;
 
   /**
-   * Get provider type identifier
+   * Get API format type
    */
-  abstract get type(): 'openrouter' | 'ollama';
+  abstract get apiFormat(): ApiFormat;
 
   /**
    * Check if provider is configured (has API key if needed)
@@ -44,9 +59,35 @@ export abstract class BaseLLMProvider {
   abstract testConnection(): Promise<boolean>;
 
   /**
-   * Get available models from the provider
+   * Fetch models from the provider API (auto-fetch)
    */
-  abstract getModels(): Promise<LLMModel[]>;
+  abstract fetchModels(): Promise<LLMModel[]>;
+
+  /**
+   * Get available models - combines user-defined and auto-fetched
+   */
+  async getModels(): Promise<LLMModel[]> {
+    const userModels: LLMModel[] = this.extendedConfig.userModels.map(m => ({
+      id: m.id,
+      name: m.name,
+      contextLength: m.contextLength,
+    }));
+
+    if (!this.extendedConfig.autoFetchModels) {
+      return userModels;
+    }
+
+    try {
+      const fetchedModels = await this.fetchModels();
+      // Merge: user models take precedence (by id)
+      const userModelIds = new Set(userModels.map(m => m.id));
+      const uniqueFetchedModels = fetchedModels.filter(m => !userModelIds.has(m.id));
+      return [...userModels, ...uniqueFetchedModels];
+    } catch (error) {
+      console.warn(`[${this.name}] Failed to fetch models, using user-defined only`);
+      return userModels;
+    }
+  }
 
   /**
    * Send a completion request (non-streaming)
@@ -60,6 +101,20 @@ export abstract class BaseLLMProvider {
     options: LLMRequestOptions,
     onChunk: (chunk: LLMStreamChunk) => void
   ): Promise<LLMResponse>;
+
+  /**
+   * Update user-defined models
+   */
+  setUserModels(models: ProviderModel[]): void {
+    this.extendedConfig.userModels = models;
+  }
+
+  /**
+   * Set auto-fetch mode
+   */
+  setAutoFetchModels(enabled: boolean): void {
+    this.extendedConfig.autoFetchModels = enabled;
+  }
 
   /**
    * Abort any ongoing request

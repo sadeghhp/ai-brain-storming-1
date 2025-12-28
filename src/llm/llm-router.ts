@@ -1,11 +1,12 @@
 // ============================================
 // AI Brainstorm - LLM Router
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
-import { OpenRouterProvider } from './providers/openrouter';
+import { OpenAIProvider } from './providers/openai-provider';
+import { AnthropicProvider } from './providers/anthropic-provider';
 import { OllamaProvider } from './providers/ollama';
-import { BaseLLMProvider } from './providers/base-provider';
+import { BaseLLMProvider, type ExtendedProviderConfig } from './providers/base-provider';
 import { providerStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import type {
@@ -15,7 +16,7 @@ import type {
   LLMModel,
   LLMProviderConfig,
 } from './types';
-import type { LLMProvider as LLMProviderEntity, LLMProviderType } from '../types';
+import type { LLMProvider as LLMProviderEntity, ApiFormat } from '../types';
 
 /**
  * LLM Router - Routes requests to the appropriate provider
@@ -42,29 +43,40 @@ class LLMRouterService {
   }
 
   /**
-   * Register a provider from storage entity
+   * Create a provider instance based on API format
    */
-  registerProvider(entity: LLMProviderEntity): void {
+  private createProvider(entity: LLMProviderEntity): BaseLLMProvider | null {
     const config: LLMProviderConfig = {
       apiKey: entity.apiKey,
       baseUrl: entity.baseUrl,
     };
 
-    let provider: BaseLLMProvider;
+    const extendedConfig: Partial<ExtendedProviderConfig> = {
+      autoFetchModels: entity.autoFetchModels,
+      userModels: entity.models,
+    };
 
-    switch (entity.type) {
-      case 'openrouter':
-        provider = new OpenRouterProvider(config);
-        break;
+    switch (entity.apiFormat) {
+      case 'openai':
+        return new OpenAIProvider(config, extendedConfig, entity.name);
+      case 'anthropic':
+        return new AnthropicProvider(config, extendedConfig, entity.name);
       case 'ollama':
-        provider = new OllamaProvider(config);
-        break;
+        return new OllamaProvider(config, extendedConfig, entity.name);
       default:
-        console.warn(`[LLMRouter] Unknown provider type: ${entity.type}`);
-        return;
+        console.warn(`[LLMRouter] Unknown API format: ${entity.apiFormat}`);
+        return null;
     }
+  }
 
-    this.providers.set(entity.id, provider);
+  /**
+   * Register a provider from storage entity
+   */
+  registerProvider(entity: LLMProviderEntity): void {
+    const provider = this.createProvider(entity);
+    if (provider) {
+      this.providers.set(entity.id, provider);
+    }
   }
 
   /**
@@ -79,6 +91,42 @@ class LLMRouterService {
       await providerStorage.update(id, config);
       
       // Clear models cache for this provider
+      this.modelsCache.delete(id);
+    }
+  }
+
+  /**
+   * Sync provider's user models from storage
+   */
+  async syncProviderModels(id: string): Promise<void> {
+    const provider = this.providers.get(id);
+    const entity = await providerStorage.getById(id);
+    
+    if (provider && entity) {
+      provider.setUserModels(entity.models);
+      provider.setAutoFetchModels(entity.autoFetchModels);
+      this.modelsCache.delete(id);
+    }
+  }
+
+  /**
+   * Reload a provider (re-create with updated settings)
+   */
+  async reloadProvider(id: string): Promise<void> {
+    const entity = await providerStorage.getById(id);
+    if (!entity) {
+      console.warn(`[LLMRouter] Provider not found: ${id}`);
+      return;
+    }
+
+    // Abort any ongoing requests
+    const oldProvider = this.providers.get(id);
+    oldProvider?.abort();
+
+    // Create new provider with updated settings
+    const newProvider = this.createProvider(entity);
+    if (newProvider) {
+      this.providers.set(id, newProvider);
       this.modelsCache.delete(id);
     }
   }
@@ -213,17 +261,19 @@ class LLMRouterService {
   /**
    * Create a new provider
    */
-  async createProvider(
+  async createNewProvider(
     name: string,
-    type: LLMProviderType,
+    apiFormat: ApiFormat,
     baseUrl: string,
-    apiKey?: string
+    apiKey?: string,
+    autoFetchModels: boolean = true
   ): Promise<LLMProviderEntity> {
     const entity = await providerStorage.create({
       name,
-      type,
+      apiFormat,
       baseUrl,
       apiKey,
+      autoFetchModels,
     });
 
     this.registerProvider(entity);

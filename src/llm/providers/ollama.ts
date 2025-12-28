@@ -1,9 +1,9 @@
 // ============================================
 // AI Brainstorm - Ollama Provider
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
-import { BaseLLMProvider } from './base-provider';
+import { BaseLLMProvider, type ExtendedProviderConfig } from './base-provider';
 import type {
   LLMRequestOptions,
   LLMResponse,
@@ -14,6 +14,7 @@ import type {
   OllamaChatRequest,
   OllamaChatResponse,
 } from '../types';
+import type { ApiFormat } from '../../types';
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
 
@@ -26,19 +27,25 @@ export class OllamaProvider extends BaseLLMProvider {
   private modelsCacheTime: number = 0;
   private readonly CACHE_TTL = 60 * 1000; // 1 minute (local, so faster refresh)
   private corsWarningShown = false;
+  private providerName: string;
 
-  constructor(config: LLMProviderConfig) {
+  constructor(
+    config: LLMProviderConfig,
+    extendedConfig?: Partial<ExtendedProviderConfig>,
+    providerName: string = 'Ollama'
+  ) {
     super({
       ...config,
       baseUrl: config.baseUrl || DEFAULT_BASE_URL,
-    });
+    }, extendedConfig);
+    this.providerName = providerName;
   }
 
   get name(): string {
-    return 'Ollama';
+    return this.providerName;
   }
 
-  get type(): 'ollama' {
+  get apiFormat(): ApiFormat {
     return 'ollama';
   }
 
@@ -87,7 +94,7 @@ Or set it permanently in your environment variables.
     }
   }
 
-  async getModels(): Promise<LLMModel[]> {
+  async fetchModels(): Promise<LLMModel[]> {
     // Return cached models if still valid
     if (this.modelsCache && Date.now() - this.modelsCacheTime < this.CACHE_TTL) {
       return this.modelsCache;
@@ -281,6 +288,14 @@ Or set it permanently in your environment variables.
       this.handleConnectionError(error);
       throw error;
     }
+  }
+
+  /**
+   * Clear the models cache
+   */
+  clearModelsCache(): void {
+    this.modelsCache = null;
+    this.modelsCacheTime = 0;
   }
 }
 

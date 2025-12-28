@@ -4,36 +4,36 @@ overview: Redesign the LLM provider system to allow users to define custom provi
 todos:
   - id: types-update
     content: Update LLMProvider types with ApiFormat, ProviderModel, and new fields
-    status: pending
+    status: completed
   - id: db-migration
     content: Create database v2 schema with migration for existing providers
-    status: pending
+    status: completed
   - id: storage-crud
     content: Add model CRUD operations to storage-manager
-    status: pending
+    status: completed
   - id: openai-provider
     content: Create OpenAI-compatible provider class (replaces openrouter.ts)
-    status: pending
+    status: completed
   - id: anthropic-provider
     content: Create Anthropic-compatible provider class
-    status: pending
+    status: completed
     dependencies:
       - openai-provider
   - id: ollama-update
     content: Update Ollama provider to new interface
-    status: pending
+    status: completed
     dependencies:
       - openai-provider
   - id: router-refactor
     content: Refactor llm-router to use apiFormat-based routing
-    status: pending
+    status: completed
     dependencies:
       - openai-provider
       - anthropic-provider
       - ollama-update
   - id: settings-ui
     content: Update settings-panel with provider/model management UI
-    status: pending
+    status: completed
     dependencies:
       - storage-crud
       - router-refactor

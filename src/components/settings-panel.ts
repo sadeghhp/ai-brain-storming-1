@@ -1,12 +1,12 @@
 // ============================================
 // AI Brainstorm - Settings Panel Component
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
 import { settingsStorage, providerStorage } from '../storage/storage-manager';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
-import type { AppSettings, LLMProvider } from '../types';
+import type { AppSettings, LLMProvider, ApiFormat } from '../types';
 
 export class SettingsPanel extends HTMLElement {
   private settings: AppSettings | null = null;
@@ -291,6 +291,189 @@ export class SettingsPanel extends HTMLElement {
           color: var(--color-text-tertiary);
           font-size: var(--text-xs);
         }
+
+        .add-provider-btn {
+          width: 100%;
+          padding: var(--space-3);
+          background: var(--color-primary-dim);
+          border: 1px dashed var(--color-primary);
+          border-radius: var(--radius-md);
+          color: var(--color-primary);
+          font-weight: var(--font-medium);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          margin-bottom: var(--space-4);
+        }
+
+        .add-provider-btn:hover {
+          background: var(--color-primary);
+          color: white;
+          border-style: solid;
+        }
+
+        .provider-format {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          margin-left: var(--space-2);
+          padding: var(--space-1) var(--space-2);
+          background: var(--color-bg-tertiary);
+          border-radius: var(--radius-sm);
+        }
+
+        .provider-actions {
+          display: flex;
+          gap: var(--space-2);
+          align-items: center;
+        }
+
+        .delete-provider-btn {
+          padding: var(--space-2);
+          background: transparent;
+          border: none;
+          border-radius: var(--radius-md);
+          color: var(--color-text-tertiary);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .delete-provider-btn:hover {
+          background: var(--color-error);
+          color: white;
+        }
+
+        .models-section {
+          margin-top: var(--space-3);
+          padding-top: var(--space-3);
+          border-top: 1px solid var(--color-border);
+        }
+
+        .models-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: var(--space-2);
+        }
+
+        .models-title {
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-secondary);
+        }
+
+        .models-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: var(--space-2);
+          margin-bottom: var(--space-2);
+        }
+
+        .model-tag {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--space-1);
+          padding: var(--space-1) var(--space-2);
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          font-size: var(--text-xs);
+          color: var(--color-text-secondary);
+        }
+
+        .model-tag.custom {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .model-tag .remove-model {
+          padding: 0;
+          background: none;
+          border: none;
+          color: inherit;
+          cursor: pointer;
+          opacity: 0.6;
+          font-size: 14px;
+          line-height: 1;
+        }
+
+        .model-tag .remove-model:hover {
+          opacity: 1;
+        }
+
+        .add-model-btn {
+          padding: var(--space-1) var(--space-2);
+          background: transparent;
+          border: 1px dashed var(--color-border);
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          font-size: var(--text-xs);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .add-model-btn:hover {
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+        }
+
+        .modal {
+          background: var(--color-bg-primary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg);
+          padding: var(--space-6);
+          width: 400px;
+          max-width: 90vw;
+        }
+
+        .modal h3 {
+          margin: 0 0 var(--space-4) 0;
+          color: var(--color-text-primary);
+        }
+
+        .modal-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: var(--space-2);
+          margin-top: var(--space-4);
+        }
+
+        .modal-btn {
+          padding: var(--space-2) var(--space-4);
+          border-radius: var(--radius-md);
+          font-weight: var(--font-medium);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .modal-btn.cancel {
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          color: var(--color-text-secondary);
+        }
+
+        .modal-btn.cancel:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .modal-btn.primary {
+          background: var(--color-primary);
+          border: none;
+          color: white;
+        }
+
+        .modal-btn.primary:hover {
+          opacity: 0.9;
+        }
       </style>
 
       <div class="settings-header">
@@ -342,28 +525,39 @@ export class SettingsPanel extends HTMLElement {
             LLM Providers
           </div>
 
+          <button class="add-provider-btn" id="add-provider-btn">+ Add Provider</button>
+
           ${this.providers.map(provider => `
             <div class="provider-card" data-provider-id="${provider.id}">
               <div class="provider-header">
-                <span class="provider-name">${provider.name}</span>
-                <div class="provider-status">
-                  <span class="status-dot ${provider.isActive ? 'connected' : ''}"></span>
-                  <span>${provider.isActive ? 'Connected' : 'Not configured'}</span>
+                <div>
+                  <span class="provider-name">${provider.name}</span>
+                  <span class="provider-format">${this.formatApiFormat(provider.apiFormat)}</span>
+                </div>
+                <div class="provider-actions">
+                  <div class="provider-status">
+                    <span class="status-dot ${provider.isActive ? 'connected' : ''}"></span>
+                    <span>${provider.isActive ? 'Connected' : 'Not configured'}</span>
+                  </div>
+                  <button class="delete-provider-btn" data-provider="${provider.id}" title="Delete provider">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                  </button>
                 </div>
               </div>
               <div class="form-group">
-                <label class="form-label">API Key ${provider.type === 'ollama' ? '(optional)' : ''}</label>
+                <label class="form-label">API Key ${provider.apiFormat === 'ollama' ? '(optional)' : ''}</label>
                 <input 
                   type="password" 
                   class="form-input api-key-input" 
                   data-provider="${provider.id}"
                   value="${provider.apiKey || ''}"
-                  placeholder="${provider.type === 'ollama' ? 'Not required for Ollama' : 'Enter your API key'}"
+                  placeholder="${provider.apiFormat === 'ollama' ? 'Not required for Ollama' : 'Enter your API key'}"
                 >
                 <div class="form-hint">
-                  ${provider.type === 'openrouter' 
-                    ? 'Get your API key from openrouter.ai' 
-                    : 'Ollama runs locally. Make sure OLLAMA_ORIGINS=* is set.'}
+                  ${this.getApiKeyHint(provider.apiFormat)}
                 </div>
               </div>
               <div class="form-group">
@@ -375,6 +569,30 @@ export class SettingsPanel extends HTMLElement {
                   value="${provider.baseUrl}"
                 >
               </div>
+              <div class="toggle-group" style="margin-top: var(--space-2);">
+                <span class="toggle-label">Auto-fetch models from API</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" class="auto-fetch-toggle" data-provider="${provider.id}" ${provider.autoFetchModels ? 'checked' : ''}>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              
+              <!-- Models Section -->
+              <div class="models-section">
+                <div class="models-header">
+                  <span class="models-title">Models</span>
+                </div>
+                <div class="models-list">
+                  ${(provider.models || []).map(model => `
+                    <span class="model-tag ${model.isCustom ? 'custom' : ''}" data-model-id="${model.id}">
+                      ${model.name}
+                      ${model.isCustom ? `<button class="remove-model" data-provider="${provider.id}" data-model="${model.id}">×</button>` : ''}
+                    </span>
+                  `).join('')}
+                  <button class="add-model-btn" data-provider="${provider.id}">+ Add Model</button>
+                </div>
+              </div>
+              
               <button class="test-btn" data-provider="${provider.id}">Test Connection</button>
             </div>
           `).join('')}
@@ -418,13 +636,87 @@ export class SettingsPanel extends HTMLElement {
         </div>
 
         <div class="version-info">
-          AI Brainstorm v1.0.0
+          AI Brainstorm v2.0.0
+        </div>
+      </div>
+
+      <!-- Add Provider Modal -->
+      <div class="modal-overlay" id="add-provider-modal" style="display: none;">
+        <div class="modal">
+          <h3>Add New Provider</h3>
+          <div class="form-group">
+            <label class="form-label">Provider Name</label>
+            <input type="text" class="form-input" id="new-provider-name" placeholder="e.g., My OpenAI Server">
+          </div>
+          <div class="form-group">
+            <label class="form-label">API Format</label>
+            <select class="form-select" id="new-provider-format">
+              <option value="openai">OpenAI Compatible</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Base URL</label>
+            <input type="text" class="form-input" id="new-provider-url" placeholder="https://api.example.com/v1">
+          </div>
+          <div class="form-group">
+            <label class="form-label">API Key (optional)</label>
+            <input type="password" class="form-input" id="new-provider-key" placeholder="Enter API key">
+          </div>
+          <div class="modal-actions">
+            <button class="modal-btn cancel" id="cancel-add-provider">Cancel</button>
+            <button class="modal-btn primary" id="confirm-add-provider">Add Provider</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add Model Modal -->
+      <div class="modal-overlay" id="add-model-modal" style="display: none;">
+        <div class="modal">
+          <h3>Add Custom Model</h3>
+          <div class="form-group">
+            <label class="form-label">Model ID</label>
+            <input type="text" class="form-input" id="new-model-id" placeholder="e.g., gpt-4o or claude-3-sonnet">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Display Name</label>
+            <input type="text" class="form-input" id="new-model-name" placeholder="e.g., GPT-4o">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Context Length</label>
+            <input type="number" class="form-input" id="new-model-context" value="8192" min="1000" max="2000000">
+          </div>
+          <div class="modal-actions">
+            <button class="modal-btn cancel" id="cancel-add-model">Cancel</button>
+            <button class="modal-btn primary" id="confirm-add-model">Add Model</button>
+          </div>
         </div>
       </div>
     `;
 
     this.setupEventHandlers();
   }
+
+  private formatApiFormat(format: ApiFormat): string {
+    switch (format) {
+      case 'openai': return 'OpenAI Format';
+      case 'anthropic': return 'Anthropic Format';
+      case 'ollama': return 'Ollama Format';
+      default: return format;
+    }
+  }
+
+  private getApiKeyHint(format: ApiFormat): string {
+    switch (format) {
+      case 'openai': return 'Required for most OpenAI-compatible APIs';
+      case 'anthropic': return 'Get your API key from console.anthropic.com';
+      case 'ollama': return 'Ollama runs locally. Make sure OLLAMA_ORIGINS=* is set.';
+      default: return '';
+    }
+  }
+
+  private currentAddModelProviderId: string | null = null;
 
   private setupEventHandlers() {
     // Close button
@@ -443,6 +735,42 @@ export class SettingsPanel extends HTMLElement {
         option.classList.add('selected');
         
         eventBus.emit('settings:updated', this.settings!);
+      });
+    });
+
+    // Add Provider button
+    this.shadowRoot?.getElementById('add-provider-btn')?.addEventListener('click', () => {
+      this.showAddProviderModal();
+    });
+
+    // Add Provider modal handlers
+    this.shadowRoot?.getElementById('cancel-add-provider')?.addEventListener('click', () => {
+      this.hideAddProviderModal();
+    });
+
+    this.shadowRoot?.getElementById('confirm-add-provider')?.addEventListener('click', async () => {
+      await this.handleAddProvider();
+    });
+
+    // Add Model modal handlers
+    this.shadowRoot?.getElementById('cancel-add-model')?.addEventListener('click', () => {
+      this.hideAddModelModal();
+    });
+
+    this.shadowRoot?.getElementById('confirm-add-model')?.addEventListener('click', async () => {
+      await this.handleAddModel();
+    });
+
+    // Delete provider buttons
+    this.shadowRoot?.querySelectorAll('.delete-provider-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const providerId = (e.currentTarget as HTMLButtonElement).dataset.provider;
+        if (providerId && confirm('Are you sure you want to delete this provider?')) {
+          await llmRouter.deleteProvider(providerId);
+          await this.loadData();
+          this.render();
+        }
       });
     });
 
@@ -466,6 +794,44 @@ export class SettingsPanel extends HTMLElement {
         if (providerId) {
           await providerStorage.update(providerId, { baseUrl });
           await llmRouter.updateProvider(providerId, { baseUrl });
+        }
+      });
+    });
+
+    // Auto-fetch toggle
+    this.shadowRoot?.querySelectorAll('.auto-fetch-toggle').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const providerId = (e.target as HTMLInputElement).dataset.provider;
+        const autoFetchModels = (e.target as HTMLInputElement).checked;
+        if (providerId) {
+          await providerStorage.update(providerId, { autoFetchModels });
+          await llmRouter.syncProviderModels(providerId);
+        }
+      });
+    });
+
+    // Add model buttons
+    this.shadowRoot?.querySelectorAll('.add-model-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const providerId = (e.target as HTMLButtonElement).dataset.provider;
+        if (providerId) {
+          this.showAddModelModal(providerId);
+        }
+      });
+    });
+
+    // Remove model buttons
+    this.shadowRoot?.querySelectorAll('.remove-model').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const button = e.target as HTMLButtonElement;
+        const providerId = button.dataset.provider;
+        const modelId = button.dataset.model;
+        if (providerId && modelId) {
+          await providerStorage.removeModel(providerId, modelId);
+          await llmRouter.syncProviderModels(providerId);
+          await this.loadData();
+          this.render();
         }
       });
     });
@@ -521,6 +887,130 @@ export class SettingsPanel extends HTMLElement {
       const checked = (e.target as HTMLInputElement).checked;
       this.settings = await settingsStorage.update({ autoScrollMessages: checked });
     });
+
+    // Close modals when clicking overlay
+    this.shadowRoot?.querySelectorAll('.modal-overlay').forEach(overlay => {
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          this.hideAddProviderModal();
+          this.hideAddModelModal();
+        }
+      });
+    });
+  }
+
+  private showAddProviderModal() {
+    const modal = this.shadowRoot?.getElementById('add-provider-modal');
+    if (modal) {
+      modal.style.display = 'flex';
+      // Set default URL based on format
+      this.updateDefaultUrl();
+    }
+
+    // Listen for format changes
+    const formatSelect = this.shadowRoot?.getElementById('new-provider-format') as HTMLSelectElement;
+    formatSelect?.addEventListener('change', () => this.updateDefaultUrl());
+  }
+
+  private updateDefaultUrl() {
+    const formatSelect = this.shadowRoot?.getElementById('new-provider-format') as HTMLSelectElement;
+    const urlInput = this.shadowRoot?.getElementById('new-provider-url') as HTMLInputElement;
+    
+    if (formatSelect && urlInput && !urlInput.value) {
+      switch (formatSelect.value) {
+        case 'openai':
+          urlInput.placeholder = 'https://api.openai.com/v1';
+          break;
+        case 'anthropic':
+          urlInput.placeholder = 'https://api.anthropic.com';
+          break;
+        case 'ollama':
+          urlInput.placeholder = 'http://localhost:11434';
+          break;
+      }
+    }
+  }
+
+  private hideAddProviderModal() {
+    const modal = this.shadowRoot?.getElementById('add-provider-modal');
+    if (modal) {
+      modal.style.display = 'none';
+      // Clear inputs
+      (this.shadowRoot?.getElementById('new-provider-name') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-provider-url') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-provider-key') as HTMLInputElement).value = '';
+    }
+  }
+
+  private async handleAddProvider() {
+    const name = (this.shadowRoot?.getElementById('new-provider-name') as HTMLInputElement).value.trim();
+    const apiFormat = (this.shadowRoot?.getElementById('new-provider-format') as HTMLSelectElement).value as ApiFormat;
+    const baseUrl = (this.shadowRoot?.getElementById('new-provider-url') as HTMLInputElement).value.trim();
+    const apiKey = (this.shadowRoot?.getElementById('new-provider-key') as HTMLInputElement).value.trim();
+
+    if (!name) {
+      alert('Please enter a provider name');
+      return;
+    }
+
+    if (!baseUrl) {
+      alert('Please enter a base URL');
+      return;
+    }
+
+    await llmRouter.createNewProvider(name, apiFormat, baseUrl, apiKey || undefined);
+    this.hideAddProviderModal();
+    await this.loadData();
+    this.render();
+  }
+
+  private showAddModelModal(providerId: string) {
+    this.currentAddModelProviderId = providerId;
+    const modal = this.shadowRoot?.getElementById('add-model-modal');
+    if (modal) {
+      modal.style.display = 'flex';
+    }
+  }
+
+  private hideAddModelModal() {
+    this.currentAddModelProviderId = null;
+    const modal = this.shadowRoot?.getElementById('add-model-modal');
+    if (modal) {
+      modal.style.display = 'none';
+      // Clear inputs
+      (this.shadowRoot?.getElementById('new-model-id') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-model-name') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-model-context') as HTMLInputElement).value = '8192';
+    }
+  }
+
+  private async handleAddModel() {
+    if (!this.currentAddModelProviderId) return;
+
+    const modelId = (this.shadowRoot?.getElementById('new-model-id') as HTMLInputElement).value.trim();
+    const modelName = (this.shadowRoot?.getElementById('new-model-name') as HTMLInputElement).value.trim();
+    const contextLength = parseInt((this.shadowRoot?.getElementById('new-model-context') as HTMLInputElement).value);
+
+    if (!modelId) {
+      alert('Please enter a model ID');
+      return;
+    }
+
+    if (!modelName) {
+      alert('Please enter a display name');
+      return;
+    }
+
+    await providerStorage.addModel(this.currentAddModelProviderId, {
+      id: modelId,
+      name: modelName,
+      contextLength: contextLength || 8192,
+    });
+
+    await llmRouter.syncProviderModels(this.currentAddModelProviderId);
+    this.hideAddModelModal();
+    await this.loadData();
+    this.render();
   }
 }
 

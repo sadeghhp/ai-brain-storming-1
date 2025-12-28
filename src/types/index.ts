@@ -9,6 +9,9 @@ export type ConversationMode = 'round-robin' | 'moderator' | 'dynamic';
 export type ConversationStatus = 'idle' | 'running' | 'paused' | 'completed';
 export type TurnState = 'planned' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type MessageType = 'response' | 'summary' | 'interjection' | 'system';
+export type ApiFormat = 'openai' | 'anthropic' | 'ollama';
+
+// Legacy type for backwards compatibility during migration
 export type LLMProviderType = 'openrouter' | 'ollama';
 
 // ----- Core Entities -----
@@ -100,14 +103,23 @@ export interface AgentPreset {
   defaultCreativityLevel: number;
 }
 
+export interface ProviderModel {
+  id: string;           // e.g., "gpt-4o" or "claude-3-sonnet"
+  name: string;         // Display name
+  contextLength: number;
+  isCustom: boolean;    // User-defined vs auto-fetched
+}
+
 export interface LLMProvider {
   id: string;
   name: string;
-  type: LLMProviderType;
+  apiFormat: ApiFormat;
   apiKey?: string;
   baseUrl: string;
   isActive: boolean;
   lastTestedAt?: number;
+  autoFetchModels: boolean;  // Whether to fetch models from API
+  models: ProviderModel[];   // User-defined + auto-fetched models
 }
 
 export interface UserInterjection {
@@ -230,8 +242,12 @@ export type UpdateAgent = DeepPartial<Omit<Agent, 'id' | 'conversationId'>>;
 export type CreateMessage = Omit<Message, 'id' | 'createdAt' | 'weight'>;
 export type UpdateMessage = DeepPartial<Omit<Message, 'id' | 'createdAt' | 'conversationId'>>;
 
-export type CreateLLMProvider = Omit<LLMProvider, 'id' | 'lastTestedAt' | 'isActive'>;
+export type CreateLLMProvider = Omit<LLMProvider, 'id' | 'lastTestedAt' | 'isActive' | 'models'> & { models?: ProviderModel[] };
 export type UpdateLLMProvider = DeepPartial<Omit<LLMProvider, 'id'>>;
+
+// Model CRUD types
+export type CreateProviderModel = Omit<ProviderModel, 'isCustom'>;
+export type UpdateProviderModel = DeepPartial<Omit<ProviderModel, 'id' | 'isCustom'>>;
 
 export type CreateAgentPreset = Omit<AgentPreset, 'id' | 'isBuiltIn'>;
 export type UpdateAgentPreset = DeepPartial<Omit<AgentPreset, 'id' | 'isBuiltIn'>>;

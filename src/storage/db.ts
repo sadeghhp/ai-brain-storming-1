@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Database Layer (Dexie/IndexedDB)
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
 import Dexie, { type Table } from 'dexie';
@@ -34,6 +34,7 @@ export class BrainstormDB extends Dexie {
   constructor() {
     super('BrainstormDB');
 
+    // Version 1: Original schema
     this.version(1).stores({
       // Primary key is first, then indexed fields
       conversations: 'id, status, createdAt, updatedAt',
@@ -47,6 +48,48 @@ export class BrainstormDB extends Dexie {
       userInterjections: 'id, conversationId, [conversationId+afterRound], processed',
       userReactions: 'id, messageId',
       appSettings: 'id',
+    });
+
+    // Version 2: LLM Provider refactoring - apiFormat, models array
+    this.version(2).stores({
+      conversations: 'id, status, createdAt, updatedAt',
+      turns: 'id, conversationId, agentId, [conversationId+round], [conversationId+round+sequence], state',
+      agents: 'id, conversationId, [conversationId+order], isSecretary',
+      messages: 'id, conversationId, turnId, agentId, [conversationId+round], createdAt, type',
+      notebooks: 'agentId',
+      resultDrafts: 'conversationId',
+      agentPresets: 'id, category, isBuiltIn, name',
+      llmProviders: 'id, apiFormat, isActive', // Changed: type -> apiFormat
+      userInterjections: 'id, conversationId, [conversationId+afterRound], processed',
+      userReactions: 'id, messageId',
+      appSettings: 'id',
+    }).upgrade(async (tx) => {
+      // Migrate existing providers to new format
+      const providers = await tx.table('llmProviders').toArray();
+      for (const provider of providers) {
+        // Convert old 'type' to new 'apiFormat'
+        const oldType = (provider as any).type;
+        let apiFormat: 'openai' | 'anthropic' | 'ollama' = 'openai';
+        
+        if (oldType === 'openrouter') {
+          apiFormat = 'openai';
+        } else if (oldType === 'ollama') {
+          apiFormat = 'ollama';
+        }
+        
+        // Update provider with new fields
+        await tx.table('llmProviders').update(provider.id, {
+          apiFormat,
+          autoFetchModels: true,
+          models: [],
+        });
+        
+        // Remove old 'type' field
+        await tx.table('llmProviders').update(provider.id, {
+          type: undefined,
+        });
+      }
+      console.log('[DB] Migrated LLM providers to v2 format');
     });
   }
 }
@@ -76,16 +119,20 @@ export async function initializeDatabase(): Promise<void> {
       {
         id: 'openrouter-default',
         name: 'OpenRouter',
-        type: 'openrouter',
+        apiFormat: 'openai',
         baseUrl: 'https://openrouter.ai/api/v1',
         isActive: false,
+        autoFetchModels: true,
+        models: [],
       },
       {
         id: 'ollama-default',
         name: 'Ollama (Local)',
-        type: 'ollama',
+        apiFormat: 'ollama',
         baseUrl: 'http://localhost:11434',
         isActive: false,
+        autoFetchModels: true,
+        models: [],
       },
     ]);
   }

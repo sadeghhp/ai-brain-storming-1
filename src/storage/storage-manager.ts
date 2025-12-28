@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Storage Manager
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
 import { v4 as uuidv4 } from 'uuid';
@@ -24,6 +24,10 @@ import type {
   LLMProvider,
   CreateLLMProvider,
   UpdateLLMProvider,
+  ProviderModel,
+  CreateProviderModel,
+  UpdateProviderModel,
+  ApiFormat,
   UserInterjection,
   UserReaction,
   AppSettings,
@@ -417,6 +421,7 @@ export const providerStorage = {
       ...data,
       id: uuidv4(),
       isActive: false,
+      models: data.models || [],
     };
     await db.llmProviders.put(provider);
     return provider;
@@ -434,15 +439,15 @@ export const providerStorage = {
     return db.llmProviders.where('isActive').equals(1).toArray();
   },
 
-  async getByType(type: 'openrouter' | 'ollama'): Promise<LLMProvider[]> {
-    return db.llmProviders.where('type').equals(type).toArray();
+  async getByFormat(apiFormat: ApiFormat): Promise<LLMProvider[]> {
+    return db.llmProviders.where('apiFormat').equals(apiFormat).toArray();
   },
 
   async update(id: string, data: UpdateLLMProvider): Promise<LLMProvider | undefined> {
     const existing = await db.llmProviders.get(id);
     if (!existing) return undefined;
 
-    const updated: LLMProvider = { ...existing, ...data };
+    const updated: LLMProvider = { ...existing, ...data } as LLMProvider;
     await db.llmProviders.put(updated);
     return updated;
   },
@@ -453,6 +458,79 @@ export const providerStorage = {
 
   async delete(id: string): Promise<void> {
     await db.llmProviders.delete(id);
+  },
+
+  // Model management methods
+  async addModel(providerId: string, model: CreateProviderModel): Promise<LLMProvider | undefined> {
+    const provider = await db.llmProviders.get(providerId);
+    if (!provider) return undefined;
+
+    const newModel: ProviderModel = {
+      ...model,
+      isCustom: true,
+    };
+
+    // Check if model with same ID already exists
+    const existingIndex = provider.models.findIndex(m => m.id === model.id);
+    if (existingIndex >= 0) {
+      // Update existing model
+      provider.models[existingIndex] = newModel;
+    } else {
+      // Add new model
+      provider.models.push(newModel);
+    }
+
+    await db.llmProviders.put(provider);
+    return provider;
+  },
+
+  async updateModel(providerId: string, modelId: string, data: UpdateProviderModel): Promise<LLMProvider | undefined> {
+    const provider = await db.llmProviders.get(providerId);
+    if (!provider) return undefined;
+
+    const modelIndex = provider.models.findIndex(m => m.id === modelId);
+    if (modelIndex < 0) return undefined;
+
+    provider.models[modelIndex] = {
+      ...provider.models[modelIndex],
+      ...data,
+    };
+
+    await db.llmProviders.put(provider);
+    return provider;
+  },
+
+  async removeModel(providerId: string, modelId: string): Promise<LLMProvider | undefined> {
+    const provider = await db.llmProviders.get(providerId);
+    if (!provider) return undefined;
+
+    provider.models = provider.models.filter(m => m.id !== modelId);
+    await db.llmProviders.put(provider);
+    return provider;
+  },
+
+  async setModels(providerId: string, models: ProviderModel[]): Promise<LLMProvider | undefined> {
+    const provider = await db.llmProviders.get(providerId);
+    if (!provider) return undefined;
+
+    provider.models = models;
+    await db.llmProviders.put(provider);
+    return provider;
+  },
+
+  async getModels(providerId: string): Promise<ProviderModel[]> {
+    const provider = await db.llmProviders.get(providerId);
+    return provider?.models || [];
+  },
+
+  async clearAutoFetchedModels(providerId: string): Promise<LLMProvider | undefined> {
+    const provider = await db.llmProviders.get(providerId);
+    if (!provider) return undefined;
+
+    // Keep only custom models
+    provider.models = provider.models.filter(m => m.isCustom);
+    await db.llmProviders.put(provider);
+    return provider;
   },
 };
 
