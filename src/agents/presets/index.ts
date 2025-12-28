@@ -1,11 +1,12 @@
 // ============================================
 // AI Brainstorm - Agent Presets Index
-// Version: 1.2.0
+// Version: 1.3.0
 // ============================================
 
 import { softwarePresets } from './software-presets';
 import { financePresets } from './finance-presets';
 import { generalPresets } from './general-presets';
+import { aiPresets } from './ai-presets';
 import { presetStorage } from '../../storage/storage-manager';
 import type { AgentPreset } from '../../types';
 
@@ -14,6 +15,7 @@ export const builtInPresets: AgentPreset[] = [
   ...softwarePresets,
   ...financePresets,
   ...generalPresets,
+  ...aiPresets,
 ];
 
 // Preset categories
@@ -105,7 +107,7 @@ export function getRecommendedPresets(topic: string): AgentPreset[] {
       software: ['app', 'web', 'code', 'software', 'develop', 'programming', 'api'],
       finance: ['finance', 'trading', 'investment', 'portfolio', 'risk', 'market', 'fund', 'stock', 'asset'],
       design: ['design', 'ui', 'ux', 'user', 'interface', 'experience'],
-      data: ['data', 'ml', 'machine learning', 'analytics', 'ai', 'model'],
+      data: ['data', 'ml', 'machine learning', 'analytics', 'ai', 'model', 'llm', 'gpt', 'neural', 'training', 'inference', 'prompt', 'embedding', 'rag', 'fine-tuning', 'transformer', 'deep learning'],
       business: ['business', 'product', 'requirements', 'stakeholder'],
       leadership: ['strategy', 'team', 'organization', 'vision'],
     };
@@ -183,5 +185,14 @@ export function getCriticalThinkingTeamPresets(): AgentPreset[] {
   );
 }
 
-export { softwarePresets, financePresets, generalPresets };
+/**
+ * Create an AI product development team
+ */
+export function getAITeamPresets(): AgentPreset[] {
+  return builtInPresets.filter(p =>
+    ['preset-ai-engineer', 'preset-ai-research-scientist', 'preset-ai-product-manager', 'preset-prompt-engineer', 'preset-ai-evaluation-engineer'].includes(p.id)
+  );
+}
+
+export { softwarePresets, financePresets, generalPresets, aiPresets };
 

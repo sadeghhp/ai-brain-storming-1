@@ -54,6 +54,10 @@ export class NewConversationModal extends HTMLElement {
   private isFetchingModels: boolean = false;
   private modelFetchError: string | null = null;
   private expandedCategories: Set<string> = new Set();
+  // Draft form fields (persist across re-renders)
+  private draftSubject: string = '';
+  private draftGoal: string = '';
+  private selectedMode: ConversationMode = 'round-robin';
   // Strategy and template state
   private selectedStrategyId: StartingStrategyId = 'open-brainstorm';
   private selectedTemplateId: string | null = null;
@@ -199,6 +203,10 @@ export class NewConversationModal extends HTMLElement {
     this.selectedModelId = null;
     this.customAgents = [];
     this.editingAgentIndex = -1;
+    // Reset draft fields
+    this.draftSubject = '';
+    this.draftGoal = '';
+    this.selectedMode = 'round-robin';
     // Reset strategy state
     this.selectedStrategyId = 'open-brainstorm';
     this.selectedTemplateId = null;
@@ -208,6 +216,55 @@ export class NewConversationModal extends HTMLElement {
     this.selectedDepth = 'standard';
     // Reset language state
     this.selectedLanguage = '';
+  }
+
+  /**
+   * Capture user-entered fields from the current DOM so a subsequent render
+   * doesn't wipe them.
+   */
+  private captureDraftFromDom(): void {
+    if (!this.shadowRoot) return;
+    const subjectEl = this.shadowRoot.getElementById('subject') as HTMLInputElement | null;
+    const goalEl = this.shadowRoot.getElementById('goal') as HTMLTextAreaElement | null;
+    if (subjectEl) this.draftSubject = subjectEl.value;
+    if (goalEl) this.draftGoal = goalEl.value;
+
+    const modeEl = this.shadowRoot.querySelector('.mode-option.selected') as HTMLElement | null;
+    const mode = (modeEl?.getAttribute('data-mode') || '') as ConversationMode;
+    if (mode) this.selectedMode = mode;
+  }
+
+  /**
+   * Re-apply stateful values to freshly rendered DOM nodes.
+   * (We intentionally avoid interpolating user text directly into HTML.)
+   */
+  private hydrateDraftToDom(): void {
+    if (!this.shadowRoot) return;
+    const subjectEl = this.shadowRoot.getElementById('subject') as HTMLInputElement | null;
+    const goalEl = this.shadowRoot.getElementById('goal') as HTMLTextAreaElement | null;
+    if (subjectEl && subjectEl.value !== this.draftSubject) subjectEl.value = this.draftSubject;
+    if (goalEl && goalEl.value !== this.draftGoal) goalEl.value = this.draftGoal;
+
+    const openingEl = this.shadowRoot.getElementById('opening-statement') as HTMLTextAreaElement | null;
+    if (openingEl && openingEl.value !== this.customOpeningStatement) openingEl.value = this.customOpeningStatement;
+  }
+
+  private renderPreservingDraft(): void {
+    this.captureDraftFromDom();
+    this.render();
+  }
+
+  private computeCanCreate(): boolean {
+    const activeProviders = this.providers.filter(p => p.isActive);
+    const hasActiveProvider = activeProviders.length > 0;
+
+    const providerId = this.selectedProviderId || activeProviders[0]?.id || '';
+    const selectedProvider = this.providers.find(p => p.id === providerId) || activeProviders[0];
+    const hasModels = (selectedProvider?.models?.length ?? 0) > 0;
+
+    return this.isAdvancedMode
+      ? this.customAgents.length >= 2
+      : (this.selectedPresets.size >= 2 && hasModels && hasActiveProvider);
   }
 
   private generateAgentId(): string {
@@ -1190,15 +1247,15 @@ export class NewConversationModal extends HTMLElement {
               <div class="form-group">
                 <label class="form-label">Conversation Mode</label>
                 <div class="mode-selector">
-                  <div class="mode-option selected" data-mode="round-robin">
+                  <div class="mode-option ${this.selectedMode === 'round-robin' ? 'selected' : ''}" data-mode="round-robin">
                     <div class="mode-icon">🔄</div>
                     <div class="mode-name">Round Robin</div>
                   </div>
-                  <div class="mode-option" data-mode="moderator">
+                  <div class="mode-option ${this.selectedMode === 'moderator' ? 'selected' : ''}" data-mode="moderator">
                     <div class="mode-icon">👨‍⚖️</div>
                     <div class="mode-name">Moderated</div>
                   </div>
-                  <div class="mode-option" data-mode="dynamic">
+                  <div class="mode-option ${this.selectedMode === 'dynamic' ? 'selected' : ''}" data-mode="dynamic">
                     <div class="mode-icon">💬</div>
                     <div class="mode-name">Dynamic</div>
                   </div>
@@ -1399,6 +1456,7 @@ export class NewConversationModal extends HTMLElement {
     `;
 
     this.setupEventHandlers();
+    this.hydrateDraftToDom();
   }
 
   private getPresetsByCategory(): Map<string, AgentPreset[]> {
@@ -1489,9 +1547,21 @@ export class NewConversationModal extends HTMLElement {
       }
     });
 
+    // Subject / Goal draft persistence
+    const subjectInput = this.shadowRoot?.getElementById('subject') as HTMLInputElement | null;
+    const goalInput = this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement | null;
+    subjectInput?.addEventListener('input', () => {
+      this.draftSubject = subjectInput.value;
+    });
+    goalInput?.addEventListener('input', () => {
+      this.draftGoal = goalInput.value;
+    });
+
     // Mode selector
     this.shadowRoot?.querySelectorAll('.mode-option').forEach(option => {
       option.addEventListener('click', () => {
+        const mode = option.getAttribute('data-mode') as ConversationMode;
+        if (mode) this.selectedMode = mode;
         this.shadowRoot?.querySelectorAll('.mode-option').forEach(o => o.classList.remove('selected'));
         option.classList.add('selected');
       });
@@ -1558,7 +1628,7 @@ export class NewConversationModal extends HTMLElement {
       btn.addEventListener('click', () => {
         const mode = btn.getAttribute('data-agent-mode');
         this.isAdvancedMode = mode === 'advanced';
-        this.render();
+        this.renderPreservingDraft();
       });
     });
 
@@ -1567,6 +1637,7 @@ export class NewConversationModal extends HTMLElement {
     const modelSelect = this.shadowRoot?.getElementById('model') as HTMLSelectElement | null;
 
     providerSelect?.addEventListener('change', async () => {
+      this.captureDraftFromDom();
       this.selectedProviderId = providerSelect.value;
       this.selectedModelId = null;
       
@@ -1574,12 +1645,12 @@ export class NewConversationModal extends HTMLElement {
       const selectedProvider = this.providers.find(p => p.id === this.selectedProviderId);
       if (selectedProvider && selectedProvider.isActive && selectedProvider.autoFetchModels) {
         if (!selectedProvider.models || selectedProvider.models.length === 0) {
-          this.render(); // Show loading state
+          this.renderPreservingDraft(); // Show loading state without wiping draft fields
           await this.fetchAndPersistModels(selectedProvider.id);
         }
       }
       
-      this.render();
+      this.renderPreservingDraft();
     });
 
     modelSelect?.addEventListener('change', () => {
@@ -1596,9 +1667,9 @@ export class NewConversationModal extends HTMLElement {
     this.shadowRoot?.getElementById('refresh-models')?.addEventListener('click', async () => {
       const providerId = this.selectedProviderId || (this.shadowRoot?.getElementById('provider') as HTMLSelectElement)?.value;
       if (providerId) {
-        this.render(); // Show loading state
+        this.renderPreservingDraft(); // Show loading state without wiping draft fields
         await this.fetchAndPersistModels(providerId);
-        this.render();
+        this.renderPreservingDraft();
       }
     });
 
@@ -1670,7 +1741,7 @@ export class NewConversationModal extends HTMLElement {
         const index = parseInt(btn.getAttribute('data-index') || '-1');
         if (index >= 0) {
           this.customAgents.splice(index, 1);
-          this.render();
+          this.renderPreservingDraft();
         }
       });
     });
@@ -1695,7 +1766,7 @@ export class NewConversationModal extends HTMLElement {
       }
       
       this.editingAgentIndex = -1;
-      this.render();
+      this.renderPreservingDraft();
     }) as EventListener);
 
     agentEditor?.addEventListener('agent:cancelled', () => {
@@ -1770,7 +1841,7 @@ export class NewConversationModal extends HTMLElement {
         presetId: preset.id,
       });
       
-      this.render();
+      this.renderPreservingDraft();
     }
   }
 
@@ -1865,6 +1936,12 @@ export class NewConversationModal extends HTMLElement {
     const template = getTemplateById(templateId);
     if (!template) return;
 
+    // Persist template-applied values into state (so future renders keep them)
+    this.draftSubject = template.subject;
+    this.draftGoal = template.goal;
+    this.selectedMode = template.mode;
+    this.selectedStrategyId = template.strategy;
+
     // Update form fields
     const subjectInput = this.shadowRoot?.getElementById('subject') as HTMLInputElement | null;
     const goalInput = this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement | null;
@@ -1873,7 +1950,6 @@ export class NewConversationModal extends HTMLElement {
     if (goalInput) goalInput.value = template.goal;
 
     // Update strategy
-    this.selectedStrategyId = template.strategy;
     this.shadowRoot?.querySelectorAll('.strategy-card').forEach(card => {
       const strategyId = card.getAttribute('data-strategy-id');
       card.classList.toggle('selected', strategyId === template.strategy);
@@ -1906,7 +1982,14 @@ export class NewConversationModal extends HTMLElement {
           this.selectedPresets.add(presetId);
         }
       });
-      this.render(); // Re-render to show updated selections
+
+      // Update chips in-place to avoid a full re-render (prevents flash + losing DOM-only values)
+      this.shadowRoot?.querySelectorAll('.preset-chip').forEach(chip => {
+        const presetId = chip.getAttribute('data-preset-id');
+        chip.classList.toggle('selected', !!presetId && this.selectedPresets.has(presetId));
+      });
+
+      this.updateSelectionState();
     }
   }
 
@@ -1932,7 +2015,7 @@ export class NewConversationModal extends HTMLElement {
 
     const submitBtn = this.shadowRoot?.querySelector('button[type="submit"]') as HTMLButtonElement;
     if (submitBtn) {
-      submitBtn.disabled = this.selectedPresets.size < 2;
+      submitBtn.disabled = !this.computeCanCreate();
     }
   }
 
