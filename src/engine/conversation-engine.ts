@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.7.0
+// Version: 2.8.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -475,7 +475,7 @@ export class ConversationEngine {
         agentId: this.secretary.id,
         // Keep this message language-neutral to avoid injecting English when targetLanguage is set.
         // The secretary already writes the reasoning in targetLanguage when configured.
-        content: `Total rounds: ${decision.recommendedRounds}\nReasoning: ${decision.reasoning}`,
+        content: (decision.reasoning || `${decision.recommendedRounds}`).trim(),
         round: completedRound,
         type: 'system',
       });

@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Secretary Agent
-// Version: 2.2.0
+// Version: 2.3.0
 // ============================================
 
 import { Agent } from './agent';
@@ -154,7 +154,8 @@ Keep it concise (2-4 paragraphs). Other participants will see this summary befor
     if (messages.length === 0) {
       return { 
         recommendedRounds: 3, 
-        reasoning: `No messages in round ${completedRound}; defaulting to 3 rounds.` 
+        // Avoid hardcoded English when a target language is configured.
+        reasoning: targetLanguage ? '' : `No messages in round ${completedRound}; defaulting to 3 rounds.` 
       };
     }
 
@@ -211,21 +212,24 @@ No other text outside the JSON.`,
         const rounds = Math.min(10, Math.max(2, parseInt(parsed.recommendedRounds, 10) || 5));
         return {
           recommendedRounds: rounds,
-          reasoning: parsed.reasoning || 'Analysis complete.',
+          // Avoid hardcoded English when a target language is configured.
+          reasoning: parsed.reasoning || (targetLanguage ? '' : 'Analysis complete.'),
         };
       }
 
       // Fallback if parsing fails
       return { 
         recommendedRounds: 5, 
-        reasoning: 'Unable to parse analysis; defaulting to 5 rounds.' 
+        // Avoid hardcoded English when a target language is configured.
+        reasoning: targetLanguage ? '' : 'Unable to parse analysis; defaulting to 5 rounds.' 
       };
     } catch (error) {
       this.agent.setStatus('idle');
       console.error('[Secretary] Failed to analyze and decide rounds:', error);
       return { 
         recommendedRounds: 5, 
-        reasoning: 'Analysis failed; defaulting to 5 rounds.' 
+        // Avoid hardcoded English when a target language is configured.
+        reasoning: targetLanguage ? '' : 'Analysis failed; defaulting to 5 rounds.' 
       };
     }
   }
