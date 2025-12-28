@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Navigation Sidebar Component
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import { conversationStorage } from '../storage/storage-manager';
@@ -12,6 +12,7 @@ import type { Conversation } from '../types';
 export class NavSidebar extends HTMLElement {
   private conversations: Conversation[] = [];
   private selectedId: string | null = null;
+  private showArchived: boolean = false;
 
   constructor() {
     super();
@@ -110,6 +111,7 @@ export class NavSidebar extends HTMLElement {
           margin-bottom: var(--space-1);
           transition: background var(--transition-fast);
           border: 1px solid transparent;
+          position: relative;
         }
 
         .conversation-item:hover {
@@ -121,13 +123,56 @@ export class NavSidebar extends HTMLElement {
           border-color: var(--color-primary);
         }
 
+        .conversation-item.archived {
+          opacity: 0.7;
+        }
+
+        .conversation-item.archived .conv-subject {
+          color: var(--color-text-secondary);
+        }
+
+        .conv-header {
+          display: flex;
+          align-items: flex-start;
+          gap: var(--space-2);
+        }
+
         .conv-subject {
+          flex: 1;
           font-weight: var(--font-medium);
           color: var(--color-text-primary);
           margin-bottom: var(--space-1);
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+        }
+
+        .archive-btn {
+          flex-shrink: 0;
+          padding: 4px;
+          background: transparent;
+          border: none;
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          cursor: pointer;
+          opacity: 0;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .conversation-item:hover .archive-btn {
+          opacity: 1;
+        }
+
+        .archive-btn:hover {
+          background: var(--color-surface);
+          color: var(--color-text-primary);
+        }
+
+        .archive-btn.unarchive:hover {
+          color: var(--color-success);
         }
 
         .conv-meta {
@@ -190,6 +235,51 @@ export class NavSidebar extends HTMLElement {
           margin: 0 auto var(--space-3);
           opacity: 0.5;
         }
+
+        .list-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-2) var(--space-3);
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .archive-toggle {
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+          padding: 2px 6px;
+          background: transparent;
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .archive-toggle:hover {
+          background: var(--color-surface);
+          color: var(--color-text-secondary);
+        }
+
+        .archive-toggle.active {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .archived-badge {
+          font-size: 9px;
+          padding: 1px 4px;
+          background: var(--color-surface);
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          margin-left: var(--space-1);
+        }
       </style>
 
       <div class="sidebar-header">
@@ -249,6 +339,10 @@ export class NavSidebar extends HTMLElement {
     const list = this.shadowRoot?.getElementById('conversation-list');
     if (!list) return;
 
+    const activeConversations = this.conversations.filter(c => !c.isArchived);
+    const archivedConversations = this.conversations.filter(c => c.isArchived);
+    const displayConversations = this.showArchived ? archivedConversations : activeConversations;
+
     if (this.conversations.length === 0) {
       list.innerHTML = `
         <div class="empty-state">
@@ -261,24 +355,108 @@ export class NavSidebar extends HTMLElement {
       return;
     }
 
-    list.innerHTML = this.conversations.map(conv => `
-      <div class="conversation-item ${conv.id === this.selectedId ? 'selected' : ''}" data-id="${conv.id}">
-        <div class="conv-subject">${truncate(conv.subject, 40)}</div>
-        <div class="conv-meta">
-          <span class="conv-status status-${conv.status}">${conv.status}</span>
-          <span>${formatRelativeTime(conv.updatedAt)}</span>
-        </div>
+    const archiveToggleHtml = archivedConversations.length > 0 || this.showArchived ? `
+      <div class="list-header">
+        <span>${this.showArchived ? 'Archived' : 'Conversations'}</span>
+        <button class="archive-toggle ${this.showArchived ? 'active' : ''}" id="archive-toggle">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 8v13H3V8"/>
+            <path d="M1 3h22v5H1z"/>
+            <path d="M10 12h4"/>
+          </svg>
+          ${this.showArchived ? 'Show Active' : `Archive (${archivedConversations.length})`}
+        </button>
       </div>
-    `).join('');
+    ` : '';
 
-    // Add click handlers
+    if (displayConversations.length === 0) {
+      list.innerHTML = `
+        ${archiveToggleHtml}
+        <div class="empty-state">
+          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            ${this.showArchived 
+              ? '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>' 
+              : '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'}
+          </svg>
+          <p>${this.showArchived ? 'No archived conversations' : 'No active conversations'}</p>
+        </div>
+      `;
+      this.setupArchiveToggleHandler();
+      return;
+    }
+
+    list.innerHTML = `
+      ${archiveToggleHtml}
+      ${displayConversations.map(conv => `
+        <div class="conversation-item ${conv.id === this.selectedId ? 'selected' : ''} ${conv.isArchived ? 'archived' : ''}" data-id="${conv.id}">
+          <div class="conv-header">
+            <div class="conv-subject">
+              ${truncate(conv.subject, 35)}
+              ${conv.isArchived ? '<span class="archived-badge">archived</span>' : ''}
+            </div>
+            <button class="archive-btn ${conv.isArchived ? 'unarchive' : ''}" data-id="${conv.id}" data-archived="${conv.isArchived ? 'true' : 'false'}" title="${conv.isArchived ? 'Unarchive' : 'Archive'}">
+              ${conv.isArchived 
+                ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                    <path d="M3 3v5h5"/>
+                  </svg>`
+                : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 8v13H3V8"/>
+                    <path d="M1 3h22v5H1z"/>
+                    <path d="M10 12h4"/>
+                  </svg>`
+              }
+            </button>
+          </div>
+          <div class="conv-meta">
+            <span class="conv-status status-${conv.status}">${conv.status}</span>
+            <span>${formatRelativeTime(conv.updatedAt)}</span>
+          </div>
+        </div>
+      `).join('')}
+    `;
+
+    this.setupArchiveToggleHandler();
+    this.setupConversationItemHandlers();
+  }
+
+  private setupArchiveToggleHandler() {
+    this.shadowRoot?.getElementById('archive-toggle')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.showArchived = !this.showArchived;
+      this.renderConversationList();
+    });
+  }
+
+  private setupConversationItemHandlers() {
+    const list = this.shadowRoot?.getElementById('conversation-list');
+    if (!list) return;
+
+    // Click handlers for conversation selection
     list.querySelectorAll('.conversation-item').forEach(item => {
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (e) => {
+        // Don't trigger if clicking the archive button
+        if ((e.target as HTMLElement).closest('.archive-btn')) return;
+        
         const id = item.getAttribute('data-id');
         if (id) {
           this.selectedId = id;
           this.renderConversationList();
           eventBus.emit('conversation:selected', id);
+        }
+      });
+    });
+
+    // Archive button handlers
+    list.querySelectorAll('.archive-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        const isArchived = btn.getAttribute('data-archived') === 'true';
+        
+        if (id) {
+          await conversationStorage.archive(id, !isArchived);
+          await this.loadConversations();
         }
       });
     });

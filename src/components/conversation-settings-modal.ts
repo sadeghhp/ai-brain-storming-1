@@ -554,6 +554,56 @@ export class ConversationSettingsModal extends HTMLElement {
           padding: var(--space-8);
           color: var(--color-text-tertiary);
         }
+
+        /* Danger Zone */
+        .danger-zone {
+          margin-top: var(--space-8);
+          padding: var(--space-4);
+          background: rgba(239, 68, 68, 0.05);
+          border: 1px solid rgba(239, 68, 68, 0.2);
+          border-radius: var(--radius-md);
+        }
+
+        .danger-zone-header {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          margin-bottom: var(--space-2);
+          color: var(--color-error);
+          font-weight: var(--font-semibold);
+          font-size: var(--text-sm);
+        }
+
+        .danger-zone-description {
+          font-size: var(--text-sm);
+          color: var(--color-text-secondary);
+          margin-bottom: var(--space-4);
+        }
+
+        .btn-danger {
+          background: transparent;
+          border: 1px solid var(--color-error);
+          color: var(--color-error);
+          padding: var(--space-2) var(--space-4);
+          border-radius: var(--radius-md);
+          font-weight: var(--font-medium);
+          font-size: var(--text-sm);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        .btn-danger:hover:not(:disabled) {
+          background: var(--color-error);
+          color: white;
+        }
+
+        .btn-danger:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
       </style>
 
       <div class="modal-overlay">
@@ -675,6 +725,28 @@ export class ConversationSettingsModal extends HTMLElement {
                  ${!editable ? 'disabled' : ''}>
         </div>
         <div class="form-hint">Maximum context window for each agent</div>
+      </div>
+
+      <div class="danger-zone">
+        <div class="danger-zone-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          Danger Zone
+        </div>
+        <p class="danger-zone-description">
+          Permanently delete this conversation and all its data including messages, agents, and drafts. This action cannot be undone.
+        </p>
+        <button type="button" class="btn-danger" id="delete-conv-btn" ${!editable ? 'disabled' : ''}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Delete Conversation
+        </button>
       </div>
     `;
   }
@@ -867,6 +939,26 @@ export class ConversationSettingsModal extends HTMLElement {
     this.shadowRoot?.getElementById('save-btn')?.addEventListener('click', async () => {
       await this.saveSettings();
     });
+
+    // Delete conversation button
+    this.shadowRoot?.getElementById('delete-conv-btn')?.addEventListener('click', async () => {
+      await this.deleteConversation();
+    });
+  }
+
+  private async deleteConversation() {
+    if (!this.conversation) return;
+
+    const confirmed = confirm(
+      `Are you sure you want to permanently delete "${this.conversation.subject}"?\n\nThis will delete all messages, agents, and drafts. This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    const conversationId = this.conversation.id;
+    await conversationStorage.delete(conversationId);
+    eventBus.emit('conversation:deleted', conversationId);
+    this.close();
   }
 
   private openAgentEditor(agentId: string | null) {

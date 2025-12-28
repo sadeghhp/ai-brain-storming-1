@@ -40,6 +40,8 @@ export interface Conversation {
   startingStrategy?: StartingStrategyId;
   openingStatement?: string;
   groundRules?: string;
+  // Archive status
+  isArchived?: boolean;
   createdAt: number;
   updatedAt: number;
 }

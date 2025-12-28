@@ -46,6 +46,7 @@ export const conversationStorage = {
       id: uuidv4(),
       status: 'idle',
       currentRound: 0,
+      isArchived: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -61,6 +62,16 @@ export const conversationStorage = {
     return db.conversations.orderBy('updatedAt').reverse().toArray();
   },
 
+  async getActive(): Promise<Conversation[]> {
+    const all = await db.conversations.orderBy('updatedAt').reverse().toArray();
+    return all.filter(c => !c.isArchived);
+  },
+
+  async getArchived(): Promise<Conversation[]> {
+    const all = await db.conversations.orderBy('updatedAt').reverse().toArray();
+    return all.filter(c => c.isArchived);
+  },
+
   async update(id: string, data: UpdateConversation): Promise<Conversation | undefined> {
     const existing = await db.conversations.get(id);
     if (!existing) return undefined;
@@ -72,6 +83,10 @@ export const conversationStorage = {
     };
     await db.conversations.put(updated);
     return updated;
+  },
+
+  async archive(id: string, archived: boolean = true): Promise<Conversation | undefined> {
+    return this.update(id, { isArchived: archived });
   },
 
   async delete(id: string): Promise<void> {

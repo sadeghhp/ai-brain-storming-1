@@ -1,10 +1,11 @@
 // ============================================
 // AI Brainstorm - Agent Presets Index
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import { softwarePresets } from './software-presets';
 import { financePresets } from './finance-presets';
+import { generalPresets } from './general-presets';
 import { presetStorage } from '../../storage/storage-manager';
 import type { AgentPreset } from '../../types';
 
@@ -12,10 +13,12 @@ import type { AgentPreset } from '../../types';
 export const builtInPresets: AgentPreset[] = [
   ...softwarePresets,
   ...financePresets,
+  ...generalPresets,
 ];
 
 // Preset categories
 export const presetCategories = [
+  { id: 'general', name: 'General Purpose', icon: '🎯' },
   { id: 'software', name: 'Software Development', icon: '💻' },
   { id: 'finance', name: 'Finance & Trading', icon: '📈' },
   { id: 'design', name: 'Design', icon: '🎨' },
@@ -98,6 +101,7 @@ export function getRecommendedPresets(topic: string): AgentPreset[] {
 
     // Check category keywords
     const categoryKeywords: Record<string, string[]> = {
+      general: ['brainstorm', 'think', 'idea', 'discuss', 'debate', 'general', 'strategy', 'creative', 'challenge'],
       software: ['app', 'web', 'code', 'software', 'develop', 'programming', 'api'],
       finance: ['finance', 'trading', 'investment', 'portfolio', 'risk', 'market', 'fund', 'stock', 'asset'],
       design: ['design', 'ui', 'ux', 'user', 'interface', 'experience'],
@@ -161,5 +165,23 @@ export function getFinanceTeamPresets(): AgentPreset[] {
   );
 }
 
-export { softwarePresets, financePresets };
+/**
+ * Create a general brainstorming team with diverse thinking styles
+ */
+export function getGeneralTeamPresets(): AgentPreset[] {
+  return builtInPresets.filter(p =>
+    ['preset-devils-advocate', 'preset-optimist', 'preset-brainstormer', 'preset-synthesizer', 'preset-strategic-coach'].includes(p.id)
+  );
+}
+
+/**
+ * Create a critical thinking team for thorough analysis
+ */
+export function getCriticalThinkingTeamPresets(): AgentPreset[] {
+  return builtInPresets.filter(p =>
+    ['preset-devils-advocate', 'preset-skeptic', 'preset-researcher', 'preset-mediator'].includes(p.id)
+  );
+}
+
+export { softwarePresets, financePresets, generalPresets };
 
