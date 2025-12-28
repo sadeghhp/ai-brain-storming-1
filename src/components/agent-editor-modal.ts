@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Agent Editor Modal
-// Version: 1.2.0
+// Version: 1.3.0
 // ============================================
 
 import { presetStorage, providerStorage } from '../storage/storage-manager';
@@ -26,6 +26,7 @@ export interface AgentEditorResult {
   thinkingDepth: number;
   creativityLevel: number;
   notebookUsage: number;
+  wordLimit?: number; // Optional per-agent word limit override
   llmProviderId: string;
   modelId: string;
   presetId?: string;
@@ -79,6 +80,7 @@ export class AgentEditorModal extends HTMLElement {
         thinkingDepth: config.agent.thinkingDepth ?? 3,
         creativityLevel: config.agent.creativityLevel ?? 3,
         notebookUsage: config.agent.notebookUsage ?? 50,
+        wordLimit: config.agent.wordLimit, // Optional override
         llmProviderId: config.agent.llmProviderId || '',
         modelId: config.agent.modelId || '',
         presetId: config.agent.presetId,
@@ -88,6 +90,7 @@ export class AgentEditorModal extends HTMLElement {
         thinkingDepth: 3,
         creativityLevel: 3,
         notebookUsage: 50,
+        wordLimit: undefined,
       };
     }
 
@@ -809,6 +812,14 @@ export class AgentEditorModal extends HTMLElement {
                   </div>
                   <div class="form-hint">Percentage of context to use for agent's personal notes</div>
                 </div>
+                <div class="form-group">
+                  <label class="form-label">Word Limit Override</label>
+                  <input type="number" class="form-input" id="wordLimit" 
+                         placeholder="Leave empty to use conversation default"
+                         min="50" max="1000" step="10"
+                         value="${this.formData.wordLimit ?? ''}">
+                  <div class="form-hint">Optional: Override conversation's default word limit (50-1000). Empty = use conversation default.</div>
+                </div>
               </div>
 
               <!-- Advanced: Personality -->
@@ -982,6 +993,8 @@ export class AgentEditorModal extends HTMLElement {
     const thinkingDepth = parseInt((this.shadowRoot?.getElementById('thinkingDepth') as HTMLInputElement)?.value || '3');
     const creativityLevel = parseInt((this.shadowRoot?.getElementById('creativityLevel') as HTMLInputElement)?.value || '3');
     const notebookUsage = parseInt((this.shadowRoot?.getElementById('notebookUsage') as HTMLInputElement)?.value || '50');
+    const wordLimitInput = (this.shadowRoot?.getElementById('wordLimit') as HTMLInputElement)?.value;
+    const wordLimit = wordLimitInput ? parseInt(wordLimitInput) : undefined;
     const systemPrompt = (this.shadowRoot?.getElementById('systemPrompt') as HTMLTextAreaElement)?.value;
     const strengths = (this.shadowRoot?.getElementById('strengths') as HTMLInputElement)?.value;
     const thinkingStyle = (this.shadowRoot?.getElementById('thinkingStyle') as HTMLInputElement)?.value;
@@ -999,6 +1012,7 @@ export class AgentEditorModal extends HTMLElement {
       thinkingDepth,
       creativityLevel,
       notebookUsage,
+      wordLimit,
       systemPrompt: systemPrompt || '',
       strengths: strengths || '',
       thinkingStyle: thinkingStyle || '',

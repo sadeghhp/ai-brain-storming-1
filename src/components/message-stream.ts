@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Message Stream Component
-// Version: 1.3.0
+// Version: 1.4.0
 // ============================================
 
 import { messageStorage, agentStorage } from '../storage/storage-manager';
@@ -94,6 +94,24 @@ export class MessageStream extends HTMLElement {
     eventBus.on('agent:idle', (agentId: string) => {
       this.hideThinkingIndicator(agentId);
     });
+
+    // Conversation reset - clear all messages from UI
+    eventBus.on('conversation:reset', (conversationId: string) => {
+      if (conversationId === this.conversationId) {
+        this.clearMessages();
+      }
+    });
+  }
+
+  /**
+   * Clear all messages from the UI (called on conversation reset)
+   */
+  private clearMessages() {
+    this.messages = [];
+    this.streamingAgentId = null;
+    this.streamingContent = '';
+    this.collapsedMessages.clear();
+    this.renderMessages();
   }
 
   private render() {

@@ -112,26 +112,25 @@ Keep it concise (2-4 paragraphs). Other participants will see this summary befor
       },
     ];
 
-    this.agent.setStatus('thinking');
-
+    // Stream into the main conversation UI just like other agents.
+    // (Agent.generateStreamingResponse emits: agent:thinking/speaking/idle + stream:chunk/stream:complete)
+    // IMPORTANT: Some provider implementations may not reliably send a "done" chunk; we defensively
+    // emit stream:complete in finally to ensure the temporary streaming bubble is removed.
+    let streamed = '';
     try {
-      const response = await llmRouter.complete(this.agent.llmProviderId, {
-        model: this.agent.modelId,
-        messages: prompt,
-        temperature: 0.3,
-        maxTokens: 600,
+      const response = await this.agent.generateStreamingResponse(prompt, (chunk) => {
+        streamed += chunk;
       });
 
-      this.agent.setStatus('idle');
-
       // Store in round summaries array
-      await resultDraftStorage.appendRoundSummary(this.conversationId, response.content);
+      await resultDraftStorage.appendRoundSummary(this.conversationId, response.content || streamed);
 
-      return response.content;
+      return response.content || streamed;
     } catch (error) {
-      this.agent.setStatus('idle');
       console.error('[Secretary] Failed to generate round summary:', error);
       return `Round ${round}: ${messages.length} messages were exchanged.`;
+    } finally {
+      eventBus.emit('stream:complete', { agentId: this.agent.id });
     }
   }
 

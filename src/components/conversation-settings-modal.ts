@@ -1,12 +1,12 @@
 // ============================================
 // AI Brainstorm - Conversation Settings Modal
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import { conversationStorage, agentStorage, providerStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
-import type { Conversation, Agent, LLMProvider, ConversationMode } from '../types';
+import type { Conversation, Agent, LLMProvider, ConversationMode, ExtendedMultiplier } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
 import { generateAgentColor } from '../utils/helpers';
@@ -727,6 +727,42 @@ export class ConversationSettingsModal extends HTMLElement {
         <div class="form-hint">Maximum context window for each agent</div>
       </div>
 
+      <!-- Word Limit Settings -->
+      <div class="form-group">
+        <label class="form-label">Word Limit: <span id="wordLimitValue">${conv.defaultWordLimit ?? 150} words</span></label>
+        <div class="slider-group">
+          <input type="range" class="slider-input" id="wordLimit" 
+                 min="50" max="500" step="10" value="${conv.defaultWordLimit ?? 150}"
+                 ${!editable ? 'disabled' : ''}>
+        </div>
+        <div class="form-hint">Default word limit for agent responses</div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Extended Speaking Chance: <span id="extendedChanceValue">${conv.extendedSpeakingChance ?? 20}%</span></label>
+          <div class="slider-group">
+            <input type="range" class="slider-input" id="extendedChance" 
+                   min="0" max="50" step="5" value="${conv.extendedSpeakingChance ?? 20}"
+                   ${!editable ? 'disabled' : ''}>
+          </div>
+          <div class="form-hint">Chance per turn for extended response</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Extended Multiplier</label>
+          <div class="mode-selector multiplier-selector">
+            <div class="mode-option ${(conv.extendedMultiplier ?? 3) === 3 ? 'selected' : ''} ${!editable ? 'disabled' : ''}" data-multiplier="3">
+              <div class="mode-name">3x</div>
+            </div>
+            <div class="mode-option ${conv.extendedMultiplier === 5 ? 'selected' : ''} ${!editable ? 'disabled' : ''}" data-multiplier="5">
+              <div class="mode-name">5x</div>
+            </div>
+          </div>
+          <div class="form-hint">Multiplier when extended speaking</div>
+        </div>
+      </div>
+
       <div class="danger-zone">
         <div class="danger-zone-header">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -865,6 +901,29 @@ export class ConversationSettingsModal extends HTMLElement {
       if (value) value.textContent = contextSlider.value;
     });
 
+    // Word limit sliders
+    const wordLimitSlider = this.shadowRoot?.getElementById('wordLimit') as HTMLInputElement;
+    wordLimitSlider?.addEventListener('input', () => {
+      const value = this.shadowRoot?.getElementById('wordLimitValue');
+      if (value) value.textContent = `${wordLimitSlider.value} words`;
+    });
+
+    const extendedChanceSlider = this.shadowRoot?.getElementById('extendedChance') as HTMLInputElement;
+    extendedChanceSlider?.addEventListener('input', () => {
+      const value = this.shadowRoot?.getElementById('extendedChanceValue');
+      if (value) value.textContent = `${extendedChanceSlider.value}%`;
+    });
+
+    // Extended multiplier selector
+    if (this.isEditable()) {
+      this.shadowRoot?.querySelectorAll('.multiplier-selector .mode-option:not(.disabled)').forEach(option => {
+        option.addEventListener('click', () => {
+          this.shadowRoot?.querySelectorAll('.multiplier-selector .mode-option').forEach(o => o.classList.remove('selected'));
+          option.classList.add('selected');
+        });
+      });
+    }
+
     // Agent actions
     this.shadowRoot?.querySelectorAll('.agent-action-btn.edit').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -911,6 +970,7 @@ export class ConversationSettingsModal extends HTMLElement {
           thinkingDepth: result.thinkingDepth,
           creativityLevel: result.creativityLevel,
           notebookUsage: result.notebookUsage,
+          wordLimit: result.wordLimit,
         });
       } else if (this.conversation) {
         // Create new agent
@@ -996,11 +1056,17 @@ export class ConversationSettingsModal extends HTMLElement {
 
     const subject = (this.shadowRoot?.getElementById('subject') as HTMLInputElement)?.value;
     const goal = (this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement)?.value;
-    const modeElement = this.shadowRoot?.querySelector('.mode-option.selected') as HTMLElement;
+    const modeElement = this.shadowRoot?.querySelector('.mode-option.selected:not(.multiplier-selector .mode-option)') as HTMLElement;
     const mode = modeElement?.getAttribute('data-mode') as ConversationMode;
     const speedMs = parseInt((this.shadowRoot?.getElementById('speed') as HTMLInputElement)?.value || '2000');
     const maxRounds = parseInt((this.shadowRoot?.getElementById('maxRounds') as HTMLInputElement)?.value || '0');
     const maxContextTokens = parseInt((this.shadowRoot?.getElementById('maxContext') as HTMLInputElement)?.value || '8000');
+    
+    // Word limit settings
+    const defaultWordLimit = parseInt((this.shadowRoot?.getElementById('wordLimit') as HTMLInputElement)?.value || '150');
+    const extendedSpeakingChance = parseInt((this.shadowRoot?.getElementById('extendedChance') as HTMLInputElement)?.value || '20');
+    const multiplierElement = this.shadowRoot?.querySelector('.multiplier-selector .mode-option.selected') as HTMLElement;
+    const extendedMultiplier = parseInt(multiplierElement?.getAttribute('data-multiplier') || '3') as ExtendedMultiplier;
 
     await conversationStorage.update(this.conversation.id, {
       subject,
@@ -1009,6 +1075,9 @@ export class ConversationSettingsModal extends HTMLElement {
       speedMs,
       maxRounds: maxRounds > 0 ? maxRounds : undefined,
       maxContextTokens,
+      defaultWordLimit,
+      extendedSpeakingChance,
+      extendedMultiplier,
     });
 
     eventBus.emit('conversation:updated', await conversationStorage.getById(this.conversation.id) as Conversation);

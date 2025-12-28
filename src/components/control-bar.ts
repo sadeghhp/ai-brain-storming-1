@@ -1,9 +1,11 @@
 // ============================================
 // AI Brainstorm - Control Bar Component
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import type { ConversationStatus } from '../types';
+import './confirmation-modal';
+import type { ConfirmationModal } from './confirmation-modal';
 
 export class ControlBar extends HTMLElement {
   private status: ConversationStatus = 'idle';
@@ -220,6 +222,8 @@ export class ControlBar extends HTMLElement {
           <span class="status-text">${this.status}</span>
         </div>
       </div>
+
+      <confirmation-modal id="reset-confirm-modal"></confirmation-modal>
     `;
 
     this.setupEventHandlers();
@@ -246,9 +250,28 @@ export class ControlBar extends HTMLElement {
       this.dispatchEvent(new CustomEvent('stop'));
     });
 
-    // Reset button
-    this.shadowRoot?.getElementById('reset-btn')?.addEventListener('click', () => {
-      this.dispatchEvent(new CustomEvent('reset'));
+    // Reset button - show confirmation modal
+    this.shadowRoot?.getElementById('reset-btn')?.addEventListener('click', async () => {
+      const modal = this.shadowRoot?.getElementById('reset-confirm-modal') as ConfirmationModal;
+      if (!modal) return;
+
+      const confirmed = await modal.show({
+        title: 'Reset Conversation',
+        message: 'This will delete all conversation data and allow you to start fresh. This action cannot be undone.',
+        details: [
+          'All messages will be deleted',
+          'Turn history will be cleared',
+          'Agent notebooks will be reset',
+          'Result drafts will be removed',
+        ],
+        confirmText: 'Reset Conversation',
+        cancelText: 'Cancel',
+        variant: 'warning',
+      });
+
+      if (confirmed) {
+        this.dispatchEvent(new CustomEvent('reset'));
+      }
     });
 
     // Speed slider

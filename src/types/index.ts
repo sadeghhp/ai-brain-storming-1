@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 // ----- Enums -----
@@ -25,6 +25,9 @@ export type LLMProviderType = 'openrouter' | 'ollama';
 
 // ----- Core Entities -----
 
+// Extended speaking multiplier type
+export type ExtendedMultiplier = 3 | 5;
+
 export interface Conversation {
   id: string;
   subject: string;
@@ -40,6 +43,10 @@ export interface Conversation {
   startingStrategy?: StartingStrategyId;
   openingStatement?: string;
   groundRules?: string;
+  // Word limit settings
+  defaultWordLimit?: number;          // Default word limit for agents (e.g., 150)
+  extendedSpeakingChance?: number;    // Percentage chance for extended turn (0-50)
+  extendedMultiplier?: ExtendedMultiplier; // Multiplier when extended (3x or 5x)
   // Archive status
   isArchived?: boolean;
   createdAt: number;
@@ -72,6 +79,7 @@ export interface Agent {
   thinkingDepth: number; // 1-5 scale
   creativityLevel: number; // 1-5 scale (temperature mapping)
   notebookUsage: number; // 0-100% of context to use for notebook
+  wordLimit?: number; // Optional per-agent word limit override
   isSecretary: boolean;
   color: string;
   order: number; // Position in turn order

@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.3.0
+// Version: 2.4.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -11,7 +11,7 @@ import { TurnExecutor, TurnResult } from './turn-executor';
 import { ResultManager } from './result-manager';
 import { UserInterjectionHandler } from './user-interjection';
 import { ConversationStateMachine } from './state-machine';
-import { conversationStorage, turnStorage, messageStorage } from '../storage/storage-manager';
+import { conversationStorage, turnStorage, messageStorage, notebookStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
 import { selectFirstSpeaker, getStrategyById } from '../strategies/starting-strategies';
@@ -148,17 +148,21 @@ export class ConversationEngine {
   }
 
   /**
-   * Reset the conversation
+   * Reset the conversation - clears all messages, turns, notebooks, and result drafts
+   * to allow re-running the conversation from the beginning
    */
   async reset(): Promise<void> {
     this.turnExecutor?.abort();
     this.stateMachine.reset();
 
-    // Clear turns and messages
-    const turns = await turnStorage.getByConversation(this.conversation.id);
-    for (const turn of turns) {
-      await turnStorage.updateState(turn.id, 'cancelled');
-    }
+    // Delete all turns (not just mark as cancelled)
+    await turnStorage.deleteByConversation(this.conversation.id);
+
+    // Delete all messages
+    await messageStorage.deleteByConversation(this.conversation.id);
+
+    // Clear all agent notebooks
+    await notebookStorage.clearAllForConversation(this.conversation.id);
 
     // Reset conversation state
     await conversationStorage.update(this.conversation.id, {
@@ -169,11 +173,17 @@ export class ConversationEngine {
     this.conversation.status = 'idle';
     this.conversation.currentRound = 0;
 
+    // Reset tracking state
+    this.completedAgentsInRound.clear();
+    this.currentTurnAgentId = null;
+    this.streamingContent.clear();
+
     // Reset managers
     await this.interjectionHandler.clear();
     await this.resultManager.clear();
     this.turnManager?.setCurrentRound(0);
 
+    console.log(`[Engine] Conversation ${this.conversation.id} reset - all data cleared`);
     eventBus.emit('conversation:reset', this.conversation.id);
   }
 
@@ -528,9 +538,13 @@ export class ConversationEngine {
       startingStrategy?: StartingStrategyId;
       openingStatement?: string;
       groundRules?: string;
+      // Word limit configuration
+      defaultWordLimit?: number;
+      extendedSpeakingChance?: number;
+      extendedMultiplier?: 3 | 5;
     } = {}
   ): Promise<ConversationEngine> {
-    // Create conversation with strategy config
+    // Create conversation with strategy config and word limits
     const conversation = await conversationStorage.create({
       subject,
       goal,
@@ -542,6 +556,10 @@ export class ConversationEngine {
       startingStrategy: options.startingStrategy,
       openingStatement: options.openingStatement,
       groundRules: options.groundRules,
+      // Word limit defaults
+      defaultWordLimit: options.defaultWordLimit ?? 150,
+      extendedSpeakingChance: options.extendedSpeakingChance ?? 20,
+      extendedMultiplier: options.extendedMultiplier ?? 3,
     });
 
     // Create agents

@@ -260,6 +260,10 @@ export const turnStorage = {
     if (turns.length === 0) return 0;
     return Math.max(...turns.map(t => t.round));
   },
+
+  async deleteByConversation(conversationId: string): Promise<number> {
+    return db.turns.where('conversationId').equals(conversationId).delete();
+  },
 };
 
 // ============================================
@@ -321,6 +325,10 @@ export const messageStorage = {
   async getByTurn(turnId: string): Promise<Message | undefined> {
     return db.messages.where('turnId').equals(turnId).first();
   },
+
+  async deleteByConversation(conversationId: string): Promise<number> {
+    return db.messages.where('conversationId').equals(conversationId).delete();
+  },
 };
 
 // ============================================
@@ -351,6 +359,13 @@ export const notebookStorage = {
 
   async clear(agentId: string): Promise<void> {
     await this.update(agentId, '');
+  },
+
+  async clearAllForConversation(conversationId: string): Promise<void> {
+    const agents = await db.agents.where('conversationId').equals(conversationId).toArray();
+    for (const agent of agents) {
+      await this.clear(agent.id);
+    }
   },
 };
 

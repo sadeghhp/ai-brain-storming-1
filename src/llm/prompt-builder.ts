@@ -1,12 +1,26 @@
 // ============================================
 // AI Brainstorm - Prompt Builder
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import type { LLMMessage } from './types';
 import type { Agent, Message, Conversation, UserInterjection, Notebook } from '../types';
 import { countTokens, truncateMessagesToFit } from './token-counter';
 import { getStrategyById, getAgentInstructions } from '../strategies/starting-strategies';
+
+// Word limit defaults
+const DEFAULT_WORD_LIMIT = 150;
+const DEFAULT_EXTENDED_CHANCE = 20; // 20% chance
+const DEFAULT_EXTENDED_MULTIPLIER = 3;
+
+/**
+ * Result of word limit calculation for a turn
+ */
+export interface WordLimitResult {
+  limit: number;
+  isExtended: boolean;
+  baseLimit: number;
+}
 
 interface PromptContext {
   conversation: Conversation;
@@ -17,6 +31,62 @@ interface PromptContext {
   interjections: UserInterjection[];
   secretarySummary?: string;
   isFirstTurn?: boolean;
+}
+
+/**
+ * Calculate the effective word limit for an agent's turn
+ * First turn always gets extended limit, otherwise random chance
+ */
+export function calculateWordLimit(
+  conversation: Conversation,
+  agent: Agent,
+  isFirstTurn: boolean
+): WordLimitResult {
+  // Get base limit from agent override or conversation default
+  const baseLimit = agent.wordLimit ?? conversation.defaultWordLimit ?? DEFAULT_WORD_LIMIT;
+  const multiplier = conversation.extendedMultiplier ?? DEFAULT_EXTENDED_MULTIPLIER;
+  
+  // First speaker always gets extended limit to properly set up the discussion
+  if (isFirstTurn) {
+    return {
+      limit: baseLimit * multiplier,
+      isExtended: true,
+      baseLimit,
+    };
+  }
+  
+  // Random chance for extended speaking
+  const chance = conversation.extendedSpeakingChance ?? DEFAULT_EXTENDED_CHANCE;
+  const roll = Math.random() * 100;
+  
+  if (roll < chance) {
+    return {
+      limit: baseLimit * multiplier,
+      isExtended: true,
+      baseLimit,
+    };
+  }
+  
+  return {
+    limit: baseLimit,
+    isExtended: false,
+    baseLimit,
+  };
+}
+
+/**
+ * Build word limit instruction for the prompt
+ */
+function buildWordLimitInstruction(wordLimit: WordLimitResult, thinkingDepth: number): string {
+  // Adjust limit slightly based on thinking depth (deeper thinkers get 10-20% bonus)
+  const depthBonus = Math.floor(wordLimit.limit * (thinkingDepth - 1) * 0.05);
+  const adjustedLimit = wordLimit.limit + depthBonus;
+  
+  if (wordLimit.isExtended) {
+    return `\nRESPONSE LENGTH: You may elaborate more this turn. Aim for around ${adjustedLimit} words, but prioritize quality over hitting the exact count. This is a good opportunity to develop your ideas more fully.`;
+  }
+  
+  return `\nRESPONSE LENGTH: Keep your response concise, around ${adjustedLimit} words. Be focused and get to the point quickly while still being substantive.`;
 }
 
 /**
@@ -128,10 +198,25 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
   const messages: LLMMessage[] = [];
   const isFirstTurn = context.isFirstTurn ?? (context.messages.length === 0);
 
+  // Calculate word limit for this turn
+  const wordLimit = calculateWordLimit(
+    context.conversation,
+    context.agent,
+    isFirstTurn
+  );
+
+  // Build system prompt with word limit instruction
+  let systemPrompt = buildSystemPrompt(context.agent, context.conversation);
+  
+  // Add word limit instruction (skip for secretary as they have different requirements)
+  if (!context.agent.isSecretary) {
+    systemPrompt += buildWordLimitInstruction(wordLimit, context.agent.thinkingDepth);
+  }
+
   // System prompt
   messages.push({
     role: 'system',
-    content: buildSystemPrompt(context.agent, context.conversation),
+    content: systemPrompt,
   });
 
   // Add opening statement for first turn (high visibility context)

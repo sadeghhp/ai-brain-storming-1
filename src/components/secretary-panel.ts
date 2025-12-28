@@ -1,22 +1,30 @@
 // ============================================
 // AI Brainstorm - Secretary Panel Component
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
-import { resultDraftStorage, messageStorage } from '../storage/storage-manager';
+import { resultDraftStorage, messageStorage, agentStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { copyToClipboard, downloadAsFile, parseBasicFormatting, escapeHtml } from '../utils/helpers';
-import type { ResultDraft, Message } from '../types';
+import type { ResultDraft, Message, Agent } from '../types';
+
+// Color palette for theme tags (matching variables.css)
+const THEME_COLORS = [
+  '#00f5ff', '#8b5cf6', '#f43f5e', '#22c55e', '#f59e0b',
+  '#3b82f6', '#ec4899', '#14b8a6', '#f97316', '#a855f7'
+];
 
 /**
  * Secretary Panel Component
  * Displays live round summaries and structured final results from the secretary agent
+ * Enhanced with agent colors for better readability
  */
 export class SecretaryPanel extends HTMLElement {
   private draft: ResultDraft | null = null;
   private conversationId: string | null = null;
   private roundSummaryMessages: Message[] = [];
   private activeSection: string = 'summaries';
+  agents: Map<string, Agent> = new Map();
 
   static get observedAttributes() {
     return ['conversation-id'];
@@ -43,6 +51,10 @@ export class SecretaryPanel extends HTMLElement {
   private async loadData() {
     this.conversationId = this.getAttribute('conversation-id');
     if (!this.conversationId) return;
+
+    // Load agents for color mapping
+    const agentList = await agentStorage.getByConversation(this.conversationId);
+    this.agents = new Map(agentList.filter(a => !a.isSecretary).map(a => [a.id, a]));
 
     // Load result draft
     this.draft = await resultDraftStorage.get(this.conversationId) || null;
@@ -177,46 +189,146 @@ export class SecretaryPanel extends HTMLElement {
           display: block;
         }
 
+        /* Agent Legend */
+        .agent-legend {
+          display: flex;
+          flex-wrap: wrap;
+          gap: var(--space-2);
+          padding: var(--space-3);
+          margin-bottom: var(--space-4);
+          background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg);
+          backdrop-filter: blur(8px);
+        }
+
+        .agent-legend-title {
+          width: 100%;
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          color: var(--color-text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: var(--space-1);
+        }
+
+        .agent-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--space-1);
+          padding: var(--space-1) var(--space-2);
+          border-radius: var(--radius-full);
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          background: color-mix(in srgb, var(--agent-color) 15%, transparent);
+          color: var(--agent-color);
+          border: 1px solid color-mix(in srgb, var(--agent-color) 30%, transparent);
+          transition: all var(--transition-fast);
+        }
+
+        .agent-chip:hover {
+          background: color-mix(in srgb, var(--agent-color) 25%, transparent);
+          transform: translateY(-1px);
+        }
+
+        .agent-chip::before {
+          content: '';
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: var(--agent-color);
+          box-shadow: 0 0 6px color-mix(in srgb, var(--agent-color) 50%, transparent);
+        }
+
+        /* Agent name mentions in content */
+        .agent-mention {
+          font-weight: var(--font-semibold);
+          padding: 0 2px;
+          border-radius: var(--radius-sm);
+          background: color-mix(in srgb, var(--mention-color) 12%, transparent);
+          color: var(--mention-color);
+          transition: all var(--transition-fast);
+        }
+
+        .agent-mention:hover {
+          background: color-mix(in srgb, var(--mention-color) 20%, transparent);
+        }
+
+        /* Round Summary Cards - Enhanced */
         .round-summary {
           margin-bottom: var(--space-4);
-          background: var(--color-surface);
+          background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%);
           border: 1px solid var(--color-border);
-          border-radius: var(--radius-md);
+          border-radius: var(--radius-lg);
           overflow: hidden;
+          backdrop-filter: blur(8px);
+          transition: all var(--transition-normal);
+          position: relative;
+        }
+
+        .round-summary::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 0;
+          bottom: 0;
+          width: 3px;
+          background: linear-gradient(180deg, var(--round-color-1, var(--color-primary)) 0%, var(--round-color-2, var(--color-secondary)) 100%);
+          opacity: 0.8;
+        }
+
+        .round-summary:hover {
+          border-color: var(--color-border-strong);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
 
         .round-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: var(--space-2) var(--space-3);
-          background: var(--color-bg-tertiary);
+          padding: var(--space-3) var(--space-4);
+          padding-left: calc(var(--space-4) + 3px);
+          background: linear-gradient(90deg, rgba(255,255,255,0.02) 0%, transparent 100%);
           border-bottom: 1px solid var(--color-border);
           cursor: pointer;
+          transition: all var(--transition-fast);
         }
 
         .round-header:hover {
-          background: var(--color-surface-hover);
+          background: linear-gradient(90deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
         }
 
         .round-number {
           font-size: var(--text-sm);
-          font-weight: var(--font-semibold);
-          color: var(--color-secondary);
+          font-weight: var(--font-bold);
+          color: var(--color-primary);
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        .round-number svg {
+          opacity: 0.7;
         }
 
         .round-time {
           font-size: var(--text-xs);
           color: var(--color-text-tertiary);
+          padding: 2px 8px;
+          background: var(--color-surface);
+          border-radius: var(--radius-full);
         }
 
         .round-content {
-          padding: var(--space-3);
+          padding: var(--space-4);
+          padding-left: calc(var(--space-4) + 3px);
           font-size: var(--text-sm);
           color: var(--color-text-primary);
           line-height: var(--leading-relaxed);
         }
 
+        /* Section Cards - Enhanced with glassmorphism */
         .section {
           margin-bottom: var(--space-4);
         }
@@ -238,6 +350,11 @@ export class SecretaryPanel extends HTMLElement {
           display: flex;
           align-items: center;
           gap: var(--space-2);
+          transition: color var(--transition-fast);
+        }
+
+        .section-title:hover {
+          color: var(--color-text-secondary);
         }
 
         .section-title svg {
@@ -249,19 +366,26 @@ export class SecretaryPanel extends HTMLElement {
         }
 
         .section-content {
-          background: var(--color-surface);
+          background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%);
           border: 1px solid var(--color-border);
-          border-radius: var(--radius-md);
-          padding: var(--space-3);
+          border-radius: var(--radius-lg);
+          padding: var(--space-4);
           font-size: var(--text-sm);
           color: var(--color-text-primary);
           line-height: var(--leading-relaxed);
+          backdrop-filter: blur(8px);
+          transition: all var(--transition-fast);
+        }
+
+        .section-content:hover {
+          border-color: var(--color-border-strong);
         }
 
         .section-content.collapsed {
           display: none;
         }
 
+        /* Theme Tags - Colorful */
         .themes-list {
           display: flex;
           flex-wrap: wrap;
@@ -272,12 +396,21 @@ export class SecretaryPanel extends HTMLElement {
         }
 
         .theme-tag {
-          background: var(--color-secondary);
-          color: white;
-          padding: var(--space-1) var(--space-2);
+          padding: var(--space-1) var(--space-3);
           border-radius: var(--radius-full);
           font-size: var(--text-xs);
-          font-weight: var(--font-medium);
+          font-weight: var(--font-semibold);
+          background: color-mix(in srgb, var(--tag-color, var(--color-secondary)) 20%, transparent);
+          color: var(--tag-color, var(--color-secondary));
+          border: 1px solid color-mix(in srgb, var(--tag-color, var(--color-secondary)) 35%, transparent);
+          transition: all var(--transition-fast);
+          cursor: default;
+        }
+
+        .theme-tag:hover {
+          background: color-mix(in srgb, var(--tag-color, var(--color-secondary)) 30%, transparent);
+          transform: translateY(-1px);
+          box-shadow: 0 2px 8px color-mix(in srgb, var(--tag-color, var(--color-secondary)) 25%, transparent);
         }
 
         .empty-state {
@@ -307,8 +440,8 @@ export class SecretaryPanel extends HTMLElement {
 
         .export-btn {
           flex: 1;
-          padding: var(--space-2);
-          background: var(--color-surface);
+          padding: var(--space-2) var(--space-3);
+          background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
           border: 1px solid var(--color-border);
           border-radius: var(--radius-md);
           color: var(--color-text-secondary);
@@ -322,15 +455,24 @@ export class SecretaryPanel extends HTMLElement {
         }
 
         .export-btn:hover {
-          background: var(--color-surface-hover);
+          background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%);
+          border-color: var(--color-border-strong);
           color: var(--color-text-primary);
+          transform: translateY(-1px);
+        }
+
+        .export-btn:active {
+          transform: translateY(0);
         }
 
         .updated-at {
           font-size: var(--text-xs);
           color: var(--color-text-tertiary);
           text-align: center;
-          margin-top: var(--space-2);
+          margin-top: var(--space-3);
+          padding: var(--space-2);
+          background: var(--color-surface);
+          border-radius: var(--radius-md);
         }
 
         .neutral-notice {
@@ -338,8 +480,8 @@ export class SecretaryPanel extends HTMLElement {
           align-items: center;
           gap: var(--space-2);
           padding: var(--space-2) var(--space-3);
-          background: var(--color-surface);
-          border: 1px solid var(--color-border);
+          background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(139, 92, 246, 0.03) 100%);
+          border: 1px solid rgba(139, 92, 246, 0.2);
           border-radius: var(--radius-md);
           font-size: var(--text-xs);
           color: var(--color-text-secondary);
@@ -370,6 +512,24 @@ export class SecretaryPanel extends HTMLElement {
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.6; }
+        }
+
+        /* Smooth scrollbar */
+        .panel-content::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .panel-content::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .panel-content::-webkit-scrollbar-thumb {
+          background: var(--color-border-strong);
+          border-radius: var(--radius-full);
+        }
+
+        .panel-content::-webkit-scrollbar-thumb:hover {
+          background: var(--color-text-tertiary);
         }
       </style>
 
@@ -460,6 +620,7 @@ export class SecretaryPanel extends HTMLElement {
   private renderRoundSummaries(container: HTMLElement) {
     if (this.roundSummaryMessages.length === 0 && (!this.draft?.roundSummaries || this.draft.roundSummaries.length === 0)) {
       container.innerHTML = `
+        ${this.renderAgentLegend()}
         <div class="neutral-notice">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
@@ -504,10 +665,11 @@ export class SecretaryPanel extends HTMLElement {
       });
     }
 
-    // Sort by round
+    // Sort by round (newest first)
     summaries.sort((a, b) => b.round - a.round);
 
     container.innerHTML = `
+      ${this.renderAgentLegend()}
       <div class="neutral-notice">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/>
@@ -516,23 +678,36 @@ export class SecretaryPanel extends HTMLElement {
         </svg>
         The secretary observes and records without expressing opinions
       </div>
-      ${summaries.map(s => `
-        <div class="round-summary">
-          <div class="round-header">
-            <span class="round-number">Round ${s.round}</span>
-            ${s.time ? `<span class="round-time">${new Date(s.time).toLocaleTimeString()}</span>` : ''}
+      ${summaries.map((s) => {
+        const colors = this.getRoundColors(s.round);
+        const cleanContent = s.content.replace(/^\*\*Round \d+ Summary:\*\*\n\n/, '');
+        const formattedContent = this.highlightAgentNames(parseBasicFormatting(escapeHtml(cleanContent)));
+        
+        return `
+          <div class="round-summary" style="--round-color-1: ${colors.color1}; --round-color-2: ${colors.color2};">
+            <div class="round-header">
+              <span class="round-number">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Round ${s.round}
+              </span>
+              ${s.time ? `<span class="round-time">${new Date(s.time).toLocaleTimeString()}</span>` : ''}
+            </div>
+            <div class="round-content">
+              ${formattedContent}
+            </div>
           </div>
-          <div class="round-content">
-            ${parseBasicFormatting(escapeHtml(s.content.replace(/^\*\*Round \d+ Summary:\*\*\n\n/, '')))}
-          </div>
-        </div>
-      `).join('')}
+        `;
+      }).join('')}
     `;
   }
 
   private renderFinalResult(container: HTMLElement) {
     if (!this.draft || !this.hasStructuredContent()) {
       container.innerHTML = `
+        ${this.renderAgentLegend()}
         <div class="neutral-notice">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
@@ -556,6 +731,7 @@ export class SecretaryPanel extends HTMLElement {
     }
 
     container.innerHTML = `
+      ${this.renderAgentLegend()}
       <div class="neutral-notice">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/>
@@ -565,7 +741,7 @@ export class SecretaryPanel extends HTMLElement {
         This is an objective summary based on what was discussed
       </div>
 
-      ${this.draft.executiveSummary ? this.renderSection('Executive Summary', this.draft.executiveSummary) : ''}
+      ${this.draft.executiveSummary ? this.renderSectionWithHighlights('Executive Summary', this.draft.executiveSummary) : ''}
       
       ${this.draft.themes && this.draft.themes.length > 0 ? `
         <div class="section">
@@ -577,17 +753,21 @@ export class SecretaryPanel extends HTMLElement {
           </div>
           <div class="section-content">
             <ul class="themes-list">
-              ${this.draft.themes.map(t => `<li class="theme-tag">${escapeHtml(t)}</li>`).join('')}
+              ${this.draft.themes.map((t, i) => `
+                <li class="theme-tag" style="--tag-color: ${this.getThemeColor(i)};">
+                  ${escapeHtml(t)}
+                </li>
+              `).join('')}
             </ul>
           </div>
         </div>
       ` : ''}
 
-      ${this.draft.consensusAreas ? this.renderSection('Areas of Consensus', this.draft.consensusAreas) : ''}
-      ${this.draft.disagreements ? this.renderSection('Areas of Disagreement', this.draft.disagreements) : ''}
-      ${this.draft.recommendations ? this.renderSection('Recommendations', this.draft.recommendations) : ''}
-      ${this.draft.actionItems ? this.renderSection('Action Items', this.draft.actionItems) : ''}
-      ${this.draft.openQuestions ? this.renderSection('Open Questions', this.draft.openQuestions) : ''}
+      ${this.draft.consensusAreas ? this.renderSectionWithHighlights('Areas of Consensus', this.draft.consensusAreas) : ''}
+      ${this.draft.disagreements ? this.renderSectionWithHighlights('Areas of Disagreement', this.draft.disagreements) : ''}
+      ${this.draft.recommendations ? this.renderSectionWithHighlights('Recommendations', this.draft.recommendations) : ''}
+      ${this.draft.actionItems ? this.renderSectionWithHighlights('Action Items', this.draft.actionItems) : ''}
+      ${this.draft.openQuestions ? this.renderSectionWithHighlights('Open Questions', this.draft.openQuestions) : ''}
 
       <div class="export-buttons">
         <button class="export-btn" id="export-md">
@@ -628,8 +808,13 @@ export class SecretaryPanel extends HTMLElement {
     });
   }
 
-  private renderSection(title: string, content: string): string {
+  /**
+   * Render a section with agent name highlighting
+   */
+  private renderSectionWithHighlights(title: string, content: string): string {
     if (!content || content.trim() === '') return '';
+    
+    const formattedContent = this.highlightAgentNames(parseBasicFormatting(escapeHtml(content)));
     
     return `
       <div class="section">
@@ -640,7 +825,7 @@ export class SecretaryPanel extends HTMLElement {
           ${escapeHtml(title)}
         </div>
         <div class="section-content">
-          ${parseBasicFormatting(escapeHtml(content))}
+          ${formattedContent}
         </div>
       </div>
     `;
@@ -717,6 +902,82 @@ export class SecretaryPanel extends HTMLElement {
     }
 
     return parts.join('\n');
+  }
+
+  /**
+   * Render agent color legend showing all participating agents
+   */
+  private renderAgentLegend(): string {
+    if (this.agents.size === 0) return '';
+
+    const agentChips = Array.from(this.agents.values())
+      .sort((a, b) => a.order - b.order)
+      .map(agent => `
+        <span class="agent-chip" style="--agent-color: ${agent.color};">
+          ${escapeHtml(agent.name)}
+        </span>
+      `)
+      .join('');
+
+    return `
+      <div class="agent-legend">
+        <div class="agent-legend-title">Participants</div>
+        ${agentChips}
+      </div>
+    `;
+  }
+
+  /**
+   * Highlight agent names in content with their respective colors
+   */
+  private highlightAgentNames(content: string): string {
+    if (this.agents.size === 0) return content;
+
+    let result = content;
+    
+    // Sort agents by name length (longest first) to avoid partial replacements
+    const sortedAgents = Array.from(this.agents.values())
+      .sort((a, b) => b.name.length - a.name.length);
+
+    for (const agent of sortedAgents) {
+      // Match agent name followed by word boundary (not in middle of word)
+      // Using a regex that handles common patterns like "AgentName argued", "AgentName's", etc.
+      const regex = new RegExp(`\\b(${this.escapeRegex(agent.name)})\\b`, 'g');
+      result = result.replace(regex, `<span class="agent-mention" style="--mention-color: ${agent.color};">$1</span>`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Escape special regex characters in a string
+   */
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * Get gradient colors for a round based on participating agents
+   * Returns two colors for gradient effect
+   */
+  private getRoundColors(roundIndex: number): { color1: string; color2: string } {
+    const agentList = Array.from(this.agents.values());
+    if (agentList.length === 0) {
+      return { color1: 'var(--color-primary)', color2: 'var(--color-secondary)' };
+    }
+
+    // Rotate through agent colors based on round
+    const idx1 = roundIndex % agentList.length;
+    const idx2 = (roundIndex + 1) % agentList.length;
+    
+    return {
+      color1: agentList[idx1]?.color || 'var(--color-primary)',
+      color2: agentList[idx2]?.color || 'var(--color-secondary)'
+    };
+  }
+
+  private getThemeColor(index: number): string {
+    return THEME_COLORS[index % THEME_COLORS.length];
   }
 }
 
