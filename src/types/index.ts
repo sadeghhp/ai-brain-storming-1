@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.5.0
+// Version: 1.6.0
 // ============================================
 
 // ----- Enums -----
@@ -128,6 +128,49 @@ export interface ResultDraft {
   openQuestions: string;         // Unresolved questions
   roundSummaries: string[];      // Array of round-by-round summaries
   updatedAt: number;
+}
+
+/**
+ * DistilledMemory - Compressed conversation context
+ * 
+ * This stores a continuously-updated summary of the conversation,
+ * replacing older raw messages with a compact representation that
+ * preserves important context while reducing token usage.
+ */
+export interface DistilledMemory {
+  conversationId: string;
+  
+  // Core distilled summary (compact narrative of key points)
+  distilledSummary: string;
+  
+  // Pinned facts - key terms, decisions, and facts that must be preserved
+  pinnedFacts: PinnedFact[];
+  
+  // Current discussion state
+  currentStance: string;         // Where the discussion currently stands
+  keyDecisions: string[];        // Important decisions made
+  openQuestions: string[];       // Unresolved questions
+  constraints: string[];         // Known constraints or requirements
+  actionItems: string[];         // Agreed action items
+  
+  // Metadata for distillation management
+  lastDistilledRound: number;    // Last round that was distilled
+  lastDistilledMessageId: string; // ID of last message included in distillation
+  totalMessagesDistilled: number; // Count of messages that have been distilled
+  
+  updatedAt: number;
+}
+
+/**
+ * PinnedFact - A key fact or term that should be preserved in context
+ */
+export interface PinnedFact {
+  id: string;
+  content: string;               // The fact or term
+  category: 'decision' | 'constraint' | 'definition' | 'consensus' | 'disagreement' | 'action';
+  source?: string;               // Who introduced this (agent name)
+  round: number;                 // When it was introduced
+  importance: number;            // 1-10 scale
 }
 
 export interface AgentPreset {
@@ -321,4 +364,8 @@ export type UpdateProviderModel = DeepPartial<Omit<ProviderModel, 'id' | 'isCust
 
 export type CreateAgentPreset = Omit<AgentPreset, 'id' | 'isBuiltIn'>;
 export type UpdateAgentPreset = DeepPartial<Omit<AgentPreset, 'id' | 'isBuiltIn'>>;
+
+// Distilled Memory DTOs
+export type CreateDistilledMemory = Omit<DistilledMemory, 'updatedAt'>;
+export type UpdateDistilledMemory = DeepPartial<Omit<DistilledMemory, 'conversationId'>>;
 

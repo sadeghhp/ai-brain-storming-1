@@ -1,14 +1,14 @@
 // ============================================
 // AI Brainstorm - Secretary Agent
-// Version: 2.3.0
+// Version: 2.4.1
 // ============================================
 
 import { Agent } from './agent';
 import { llmRouter } from '../llm/llm-router';
-import { buildSummaryPrompt } from '../llm/prompt-builder';
-import { resultDraftStorage, messageStorage, agentStorage, conversationStorage } from '../storage/storage-manager';
+import { buildSummaryPrompt, buildDistillationPrompt, parseDistillationResponse } from '../llm/prompt-builder';
+import { resultDraftStorage, messageStorage, agentStorage, conversationStorage, distilledMemoryStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
-import type { Message, ResultDraft, Conversation, Agent as AgentType } from '../types';
+import type { Message, ResultDraft, Conversation, Agent as AgentType, DistilledMemory, PinnedFact } from '../types';
 import type { LLMMessage } from '../llm/types';
 
 // Secretary neutrality system prompt
@@ -1106,6 +1106,178 @@ Provide a one-sentence summary of this round of discussion.`,
     const draft = await resultDraftStorage.updateThemes(this.conversationId, themes);
     eventBus.emit('draft:updated', draft);
     return draft;
+  }
+
+  // ----- Context Distillation Methods -----
+
+  /**
+   * Distill older conversation messages into a compact summary
+   * This replaces raw messages with a structured distillation that preserves context
+   * while dramatically reducing token usage
+   * 
+   * @param upToRound - Distill messages up to and including this round (default: current round - 1)
+   * @returns The updated distilled memory
+   */
+  async distillConversation(upToRound?: number): Promise<DistilledMemory> {
+    const conversation = await conversationStorage.getById(this.conversationId);
+    if (!conversation) {
+      throw new Error('Conversation not found');
+    }
+
+    // Determine which round to distill up to (leave most recent round raw)
+    const targetRound = upToRound ?? Math.max(0, conversation.currentRound - 1);
+    
+    // Get existing distillation
+    const existingDistillation = await distilledMemoryStorage.getOrCreate(this.conversationId);
+    
+    // If we've already distilled up to this round, skip
+    if (existingDistillation.lastDistilledRound >= targetRound) {
+      console.log(`[Secretary] Already distilled up to round ${existingDistillation.lastDistilledRound}, skipping`);
+      return existingDistillation;
+    }
+
+    // Get messages to distill (from last distilled message to target round)
+    const allMessages = await messageStorage.getByConversation(this.conversationId);
+    const agents = await agentStorage.getByConversation(this.conversationId);
+    
+    // Filter messages to distill:
+    // - After the last distilled message
+    // - Up to and including the target round
+    // - Only response and interjection types (not system messages)
+    const lastDistilledIdx = existingDistillation.lastDistilledMessageId
+      ? allMessages.findIndex(m => m.id === existingDistillation.lastDistilledMessageId)
+      : -1;
+    
+    const messagesToDistill = allMessages.filter((m, idx) => {
+      if (idx <= lastDistilledIdx) return false;
+      if (m.round > targetRound) return false;
+      if (m.type !== 'response' && m.type !== 'interjection' && m.type !== 'opening') return false;
+      return true;
+    });
+
+    if (messagesToDistill.length === 0) {
+      console.log('[Secretary] No new messages to distill');
+      return existingDistillation;
+    }
+
+    console.log(`[Secretary] Distilling ${messagesToDistill.length} messages from round ${existingDistillation.lastDistilledRound + 1} to ${targetRound}`);
+
+    // Build distillation prompt
+    const distillationPrompt = buildDistillationPrompt(
+      messagesToDistill,
+      agents,
+      {
+        distilledSummary: existingDistillation.distilledSummary || undefined,
+        currentStance: existingDistillation.currentStance || undefined,
+        keyDecisions: existingDistillation.keyDecisions?.length ? existingDistillation.keyDecisions : undefined,
+        openQuestions: existingDistillation.openQuestions?.length ? existingDistillation.openQuestions : undefined,
+        pinnedFacts: existingDistillation.pinnedFacts?.length ? existingDistillation.pinnedFacts : undefined,
+      },
+      conversation.subject,
+      conversation.targetLanguage
+    );
+
+    this.agent.setStatus('thinking');
+
+    try {
+      const response = await llmRouter.complete(this.agent.llmProviderId, {
+        model: this.agent.modelId,
+        messages: distillationPrompt,
+        temperature: 0.2, // Low temperature for accurate distillation
+        maxTokens: 2000,
+      });
+
+      this.agent.setStatus('idle');
+
+      // Parse the distillation response
+      const distillation = parseDistillationResponse(response.content);
+      
+      if (!distillation) {
+        console.error('[Secretary] Failed to parse distillation response');
+        // IMPORTANT: Do NOT advance the distillation cursor on parse failure.
+        // Otherwise we can permanently block distillation and let context grow unbounded.
+        throw new Error('Failed to parse distillation response');
+      }
+
+      // Convert pinned facts to include IDs
+      const pinnedFacts: PinnedFact[] = distillation.pinnedFacts.map((f, idx) => ({
+        id: `pf-${targetRound}-${idx}`,
+        content: f.content,
+        category: f.category,
+        source: f.source,
+        round: targetRound,
+        importance: f.importance,
+      }));
+
+      // Update distilled memory storage
+      const updatedMemory = await distilledMemoryStorage.update(this.conversationId, {
+        distilledSummary: distillation.distilledSummary,
+        currentStance: distillation.currentStance,
+        keyDecisions: distillation.keyDecisions,
+        openQuestions: distillation.openQuestions,
+        constraints: distillation.constraints,
+        actionItems: distillation.actionItems,
+        pinnedFacts,
+        lastDistilledRound: targetRound,
+        lastDistilledMessageId: messagesToDistill[messagesToDistill.length - 1].id,
+        totalMessagesDistilled: existingDistillation.totalMessagesDistilled + messagesToDistill.length,
+      });
+
+      console.log(`[Secretary] Distillation complete. Distilled ${messagesToDistill.length} messages into ${distillation.distilledSummary.length} chars summary with ${pinnedFacts.length} pinned facts`);
+
+      return updatedMemory;
+    } catch (error) {
+      this.agent.setStatus('idle');
+      console.error('[Secretary] Failed to distill conversation:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if context distillation is needed based on message count and round progress
+   * Returns true if distillation should be triggered
+   */
+  async shouldDistill(): Promise<boolean> {
+    const conversation = await conversationStorage.getById(this.conversationId);
+    if (!conversation) return false;
+
+    const existingDistillation = await distilledMemoryStorage.get(this.conversationId);
+    
+    // If we haven't distilled yet and we're past round 2, we should distill
+    if (!existingDistillation && conversation.currentRound >= 2) {
+      return true;
+    }
+
+    // If we're 2+ rounds ahead of last distillation, we should distill
+    if (existingDistillation && conversation.currentRound > existingDistillation.lastDistilledRound + 1) {
+      return true;
+    }
+
+    // Check message count in undistilled rounds
+    const allMessages = await messageStorage.getByConversation(this.conversationId);
+    const lastDistilledRound = existingDistillation?.lastDistilledRound ?? 0;
+    const undistilledMessages = allMessages.filter(m => m.round > lastDistilledRound);
+    
+    // If we have more than 10 undistilled messages, consider distilling
+    if (undistilledMessages.length > 10) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Get the current distilled memory for this conversation
+   */
+  async getDistilledMemory(): Promise<DistilledMemory | undefined> {
+    return distilledMemoryStorage.get(this.conversationId);
+  }
+
+  /**
+   * Clear distilled memory (e.g., when resetting conversation)
+   */
+  async clearDistilledMemory(): Promise<void> {
+    await distilledMemoryStorage.delete(this.conversationId);
   }
 
   // ----- Private Helper Methods -----

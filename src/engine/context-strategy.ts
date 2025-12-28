@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Context Window Strategy
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import type { Message, Agent, UserInterjection, Notebook } from '../types';
@@ -15,6 +15,24 @@ interface ScoredMessage {
   score: number;
   tokens: number;
 }
+
+/**
+ * Time decay configuration
+ * Controls how much older messages are penalized
+ */
+interface TimeDecayConfig {
+  enabled: boolean;
+  halfLifeMs: number;      // Time in ms for score to decay by 50%
+  minDecayFactor: number;  // Minimum decay factor (0-1), prevents complete decay
+  roundDecay: number;      // Penalty per round old (0-1 scale)
+}
+
+const DEFAULT_TIME_DECAY: TimeDecayConfig = {
+  enabled: true,
+  halfLifeMs: 30 * 60 * 1000,  // 30 minutes half-life
+  minDecayFactor: 0.3,         // Minimum 30% of original score
+  roundDecay: 0.1,             // 10% penalty per round old
+};
 
 export interface ContextBudget {
   total: number;
@@ -31,10 +49,16 @@ export interface ContextBudget {
 export class ContextStrategy {
   private maxTokens: number;
   private responseReserve: number;
+  private timeDecay: TimeDecayConfig;
 
-  constructor(maxTokens: number, responseReserve: number = 1000) {
+  constructor(
+    maxTokens: number, 
+    responseReserve: number = 1000,
+    timeDecay: Partial<TimeDecayConfig> = {}
+  ) {
     this.maxTokens = maxTokens;
     this.responseReserve = responseReserve;
+    this.timeDecay = { ...DEFAULT_TIME_DECAY, ...timeDecay };
   }
 
   /**
@@ -62,18 +86,28 @@ export class ContextStrategy {
    * - Relevance to current agent (addressed to, from same agent)
    * - Recency (recent messages get slight boost)
    * - Position in conversation (first/last messages preserved)
+   * - Time decay (older messages get progressively lower scores)
+   * - Round decay (messages from earlier rounds get penalty)
+   * 
+   * @param messages - All messages to consider
+   * @param budget - Token budget for messages
+   * @param agentId - Current agent's ID (for relevance scoring)
+   * @param currentRound - Current conversation round (for round-based decay)
    */
   selectMessages(
     messages: Message[],
     budget: number,
-    agentId: string
+    agentId: string,
+    currentRound: number = 0
   ): Message[] {
     if (budget <= 0 || messages.length === 0) return [];
+
+    const now = Date.now();
 
     // Calculate importance scores for all messages
     const scoredMessages: ScoredMessage[] = messages.map((message, index) => ({
       message,
-      score: this.calculateMessageImportance(message, agentId, index, messages.length),
+      score: this.calculateMessageImportance(message, agentId, index, messages.length, currentRound, now),
       tokens: countTokens(message.content) + 10, // +10 for formatting overhead
     }));
 
@@ -112,22 +146,30 @@ export class ContextStrategy {
   /**
    * Calculate importance score for a message
    * Higher score = more important to include
+   * 
+   * Time decay applies to regular messages (not critical ones like opening/summary)
+   * to progressively reduce the importance of older content.
    */
   private calculateMessageImportance(
     message: Message,
     agentId: string,
     index: number,
-    totalMessages: number
+    totalMessages: number,
+    currentRound: number = 0,
+    now: number = Date.now()
   ): number {
     let score = 0;
+    let isCritical = false;
 
     // Message type importance (critical types get 100+ score)
     switch (message.type) {
       case 'opening':
         score += 150; // Opening statement is critical context
+        isCritical = true;
         break;
       case 'summary':
         score += 120; // Secretary summaries provide condensed context
+        isCritical = true;
         break;
       case 'interjection':
         score += 80; // User guidance is high priority
@@ -164,7 +206,44 @@ export class ContextStrategy {
       score += 25; // Last 3 messages (recent context)
     }
 
+    // Apply time-based and round-based decay for non-critical messages
+    if (this.timeDecay.enabled && !isCritical) {
+      const decayFactor = this.calculateTimeDecay(message, currentRound, now);
+      score = Math.floor(score * decayFactor);
+    }
+
     return score;
+  }
+
+  /**
+   * Calculate time decay factor for a message
+   * Returns a value between minDecayFactor and 1.0
+   */
+  private calculateTimeDecay(
+    message: Message,
+    currentRound: number,
+    now: number
+  ): number {
+    let decayFactor = 1.0;
+
+    // Time-based decay (exponential decay based on age)
+    const ageMs = now - message.createdAt;
+    if (ageMs > 0 && this.timeDecay.halfLifeMs > 0) {
+      // Exponential decay: factor = 2^(-age/halfLife)
+      const halfLives = ageMs / this.timeDecay.halfLifeMs;
+      const timeFactor = Math.pow(0.5, halfLives);
+      decayFactor *= timeFactor;
+    }
+
+    // Round-based decay (linear penalty per round old)
+    const roundsOld = currentRound - message.round;
+    if (roundsOld > 0 && this.timeDecay.roundDecay > 0) {
+      const roundFactor = Math.max(0, 1 - (roundsOld * this.timeDecay.roundDecay));
+      decayFactor *= roundFactor;
+    }
+
+    // Apply minimum decay floor
+    return Math.max(this.timeDecay.minDecayFactor, decayFactor);
   }
 
   /**
@@ -223,6 +302,14 @@ export class ContextStrategy {
 
   /**
    * Build optimized context for an agent
+   * 
+   * @param systemPrompt - The system prompt for the agent
+   * @param messages - All conversation messages
+   * @param interjections - User interjections
+   * @param notebook - Agent's notebook (if any)
+   * @param agentId - Current agent's ID
+   * @param agents - All agents in the conversation
+   * @param currentRound - Current conversation round (for time decay)
    */
   buildOptimizedContext(
     systemPrompt: string,
@@ -230,7 +317,8 @@ export class ContextStrategy {
     interjections: UserInterjection[],
     notebook: Notebook | null,
     agentId: string,
-    agents: Agent[]
+    agents: Agent[],
+    currentRound: number = 0
   ): LLMMessage[] {
     const systemTokens = countTokens(systemPrompt);
     const budget = this.calculateBudget(systemTokens);
@@ -260,8 +348,8 @@ export class ContextStrategy {
       });
     }
 
-    // Messages
-    const selectedMessages = this.selectMessages(messages, budget.messages, agentId);
+    // Messages (with time decay based on current round)
+    const selectedMessages = this.selectMessages(messages, budget.messages, agentId, currentRound);
     for (const message of selectedMessages) {
       const sender = agents.find(a => a.id === message.agentId);
       const senderName = sender?.name || 'Unknown';

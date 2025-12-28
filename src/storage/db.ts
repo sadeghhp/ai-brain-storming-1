@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Database Layer (Dexie/IndexedDB)
-// Version: 2.0.0
+// Version: 2.1.0
 // ============================================
 
 import Dexie, { type Table } from 'dexie';
@@ -11,6 +11,7 @@ import type {
   Message,
   Notebook,
   ResultDraft,
+  DistilledMemory,
   AgentPreset,
   LLMProvider,
   UserInterjection,
@@ -25,6 +26,7 @@ export class BrainstormDB extends Dexie {
   messages!: Table<Message, string>;
   notebooks!: Table<Notebook, string>;
   resultDrafts!: Table<ResultDraft, string>;
+  distilledMemories!: Table<DistilledMemory, string>;
   agentPresets!: Table<AgentPreset, string>;
   llmProviders!: Table<LLMProvider, string>;
   userInterjections!: Table<UserInterjection, string>;
@@ -101,6 +103,22 @@ export class BrainstormDB extends Dexie {
       messages: 'id, conversationId, turnId, agentId, [conversationId+round], createdAt, type',
       notebooks: 'agentId',
       resultDrafts: 'conversationId',
+      agentPresets: 'id, category, isBuiltIn, name',
+      llmProviders: 'id, apiFormat, isActive',
+      userInterjections: 'id, conversationId, [conversationId+afterRound], processed, [conversationId+processed]',
+      userReactions: 'id, messageId',
+      appSettings: 'id',
+    });
+
+    // Version 4: Add distilledMemories table for context distillation
+    this.version(4).stores({
+      conversations: 'id, status, createdAt, updatedAt',
+      turns: 'id, conversationId, agentId, [conversationId+round], [conversationId+round+sequence], state',
+      agents: 'id, conversationId, [conversationId+order], isSecretary',
+      messages: 'id, conversationId, turnId, agentId, [conversationId+round], createdAt, type',
+      notebooks: 'agentId',
+      resultDrafts: 'conversationId',
+      distilledMemories: 'conversationId, lastDistilledRound', // Indexed by conversation and round
       agentPresets: 'id, category, isBuiltIn, name',
       llmProviders: 'id, apiFormat, isActive',
       userInterjections: 'id, conversationId, [conversationId+afterRound], processed, [conversationId+processed]',

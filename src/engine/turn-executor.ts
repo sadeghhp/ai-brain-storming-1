@@ -1,11 +1,11 @@
 // ============================================
 // AI Brainstorm - Turn Executor
-// Version: 1.2.0
+// Version: 1.3.0
 // ============================================
 
 import { Agent } from '../agents/agent';
 import { NotebookManager } from '../agents/notebook';
-import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage, resultDraftStorage } from '../storage/storage-manager';
+import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage, resultDraftStorage, distilledMemoryStorage } from '../storage/storage-manager';
 import { creativityToTemperature } from '../llm/prompt-builder';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
@@ -181,6 +181,9 @@ export class TurnExecutor {
     const resultDraft = await resultDraftStorage.get(this.conversation.id);
     const secretarySummary = resultDraft?.summary || undefined;
 
+    // Get distilled memory for context compression
+    const distilledMemory = await distilledMemoryStorage.get(this.conversation.id);
+
     // Determine if this is the first turn (no agent responses yet)
     const agentResponses = messages.filter(m => m.type === 'response');
     const isFirstTurn = agentResponses.length === 0;
@@ -197,8 +200,14 @@ export class TurnExecutor {
       {
         isFirstTurn,
         currentRound: this.conversation.currentRound,
+        distilledMemory: distilledMemory || null,
       }
     );
+
+    // Log if distilled memory was used
+    if (contextComponents.distilledMemoryUsed) {
+      console.log(`[TurnExecutor] Using distilled memory (${distilledMemory?.totalMessagesDistilled || 0} messages distilled)`);
+    }
 
     return contextComponents.promptMessages;
   }

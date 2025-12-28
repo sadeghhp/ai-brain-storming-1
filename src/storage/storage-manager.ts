@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Storage Manager
-// Version: 2.2.0
+// Version: 2.3.0
 // ============================================
 
 import { v4 as uuidv4 } from 'uuid';
@@ -18,6 +18,9 @@ import type {
   TurnState,
   Notebook,
   ResultDraft,
+  DistilledMemory,
+  UpdateDistilledMemory,
+  PinnedFact,
   AgentPreset,
   CreateAgentPreset,
   UpdateAgentPreset,
@@ -90,7 +93,7 @@ export const conversationStorage = {
   },
 
   async delete(id: string): Promise<void> {
-    await db.transaction('rw', [db.conversations, db.agents, db.turns, db.messages, db.notebooks, db.resultDrafts, db.userInterjections], async () => {
+    await db.transaction('rw', [db.conversations, db.agents, db.turns, db.messages, db.notebooks, db.resultDrafts, db.distilledMemories, db.userInterjections], async () => {
       // Delete all related data
       const agents = await db.agents.where('conversationId').equals(id).toArray();
       for (const agent of agents) {
@@ -100,6 +103,7 @@ export const conversationStorage = {
       await db.turns.where('conversationId').equals(id).delete();
       await db.messages.where('conversationId').equals(id).delete();
       await db.resultDrafts.delete(id);
+      await db.distilledMemories.delete(id);
       await db.userInterjections.where('conversationId').equals(id).delete();
       await db.conversations.delete(id);
     });
@@ -443,6 +447,171 @@ export const resultDraftStorage = {
 
   async updateThemes(conversationId: string, themes: string[]): Promise<ResultDraft> {
     return this.update(conversationId, { themes });
+  },
+};
+
+// ============================================
+// Distilled Memory
+// ============================================
+
+export const distilledMemoryStorage = {
+  /**
+   * Get distilled memory for a conversation
+   */
+  async get(conversationId: string): Promise<DistilledMemory | undefined> {
+    return db.distilledMemories.get(conversationId);
+  },
+
+  /**
+   * Create initial distilled memory for a conversation
+   */
+  async create(conversationId: string): Promise<DistilledMemory> {
+    const memory: DistilledMemory = {
+      conversationId,
+      distilledSummary: '',
+      pinnedFacts: [],
+      currentStance: '',
+      keyDecisions: [],
+      openQuestions: [],
+      constraints: [],
+      actionItems: [],
+      lastDistilledRound: 0,
+      lastDistilledMessageId: '',
+      totalMessagesDistilled: 0,
+      updatedAt: Date.now(),
+    };
+    await db.distilledMemories.put(memory);
+    return memory;
+  },
+
+  /**
+   * Update distilled memory with partial data
+   */
+  async update(conversationId: string, data: UpdateDistilledMemory): Promise<DistilledMemory> {
+    const existing = await db.distilledMemories.get(conversationId);
+    
+    // Helper to safely extract array or use default (filters out undefined elements from DeepPartial)
+    const getStringArray = (arr: (string | undefined)[] | undefined, defaultVal: string[]): string[] => 
+      arr !== undefined ? (arr.filter((x): x is string => x !== undefined)) : defaultVal;
+    
+    const memory: DistilledMemory = {
+      conversationId,
+      distilledSummary: data.distilledSummary ?? existing?.distilledSummary ?? '',
+      pinnedFacts: data.pinnedFacts !== undefined 
+        ? (data.pinnedFacts as PinnedFact[]).filter(f => f !== undefined) 
+        : (existing?.pinnedFacts || []),
+      currentStance: data.currentStance ?? existing?.currentStance ?? '',
+      keyDecisions: getStringArray(data.keyDecisions, existing?.keyDecisions || []),
+      openQuestions: getStringArray(data.openQuestions, existing?.openQuestions || []),
+      constraints: getStringArray(data.constraints, existing?.constraints || []),
+      actionItems: getStringArray(data.actionItems, existing?.actionItems || []),
+      lastDistilledRound: data.lastDistilledRound ?? existing?.lastDistilledRound ?? 0,
+      lastDistilledMessageId: data.lastDistilledMessageId ?? existing?.lastDistilledMessageId ?? '',
+      totalMessagesDistilled: data.totalMessagesDistilled ?? existing?.totalMessagesDistilled ?? 0,
+      updatedAt: Date.now(),
+    };
+    await db.distilledMemories.put(memory);
+    return memory;
+  },
+
+  /**
+   * Get or create distilled memory (lazy initialization)
+   */
+  async getOrCreate(conversationId: string): Promise<DistilledMemory> {
+    const existing = await db.distilledMemories.get(conversationId);
+    if (existing) return existing;
+    return this.create(conversationId);
+  },
+
+  /**
+   * Add a pinned fact to the distilled memory
+   */
+  async addPinnedFact(conversationId: string, fact: Omit<PinnedFact, 'id'>): Promise<DistilledMemory> {
+    const existing = await this.getOrCreate(conversationId);
+    const newFact: PinnedFact = {
+      ...fact,
+      id: uuidv4(),
+    };
+    return this.update(conversationId, {
+      pinnedFacts: [...existing.pinnedFacts, newFact],
+    });
+  },
+
+  /**
+   * Remove a pinned fact by ID
+   */
+  async removePinnedFact(conversationId: string, factId: string): Promise<DistilledMemory> {
+    const existing = await this.getOrCreate(conversationId);
+    return this.update(conversationId, {
+      pinnedFacts: existing.pinnedFacts.filter(f => f.id !== factId),
+    });
+  },
+
+  /**
+   * Update pinned facts (replace all)
+   */
+  async setPinnedFacts(conversationId: string, facts: PinnedFact[]): Promise<DistilledMemory> {
+    return this.update(conversationId, { pinnedFacts: facts });
+  },
+
+  /**
+   * Get pinned facts for a conversation
+   */
+  async getPinnedFacts(conversationId: string): Promise<PinnedFact[]> {
+    const memory = await db.distilledMemories.get(conversationId);
+    return memory?.pinnedFacts || [];
+  },
+
+  /**
+   * Mark distillation progress
+   */
+  async markDistillationProgress(
+    conversationId: string,
+    lastRound: number,
+    lastMessageId: string,
+    messagesDistilled: number
+  ): Promise<DistilledMemory> {
+    const existing = await this.getOrCreate(conversationId);
+    return this.update(conversationId, {
+      lastDistilledRound: lastRound,
+      lastDistilledMessageId: lastMessageId,
+      totalMessagesDistilled: existing.totalMessagesDistilled + messagesDistilled,
+    });
+  },
+
+  /**
+   * Check if distillation is needed (based on round progress)
+   */
+  async needsDistillation(conversationId: string, currentRound: number): Promise<boolean> {
+    const memory = await db.distilledMemories.get(conversationId);
+    if (!memory) return false;
+    // Distillation is needed if we're at least 2 rounds ahead of last distillation
+    return currentRound > memory.lastDistilledRound + 1;
+  },
+
+  /**
+   * Delete distilled memory for a conversation
+   */
+  async delete(conversationId: string): Promise<void> {
+    await db.distilledMemories.delete(conversationId);
+  },
+
+  /**
+   * Clear distilled memory (reset to empty state)
+   */
+  async clear(conversationId: string): Promise<DistilledMemory> {
+    return this.update(conversationId, {
+      distilledSummary: '',
+      pinnedFacts: [],
+      currentStance: '',
+      keyDecisions: [],
+      openQuestions: [],
+      constraints: [],
+      actionItems: [],
+      lastDistilledRound: 0,
+      lastDistilledMessageId: '',
+      totalMessagesDistilled: 0,
+    });
   },
 };
 

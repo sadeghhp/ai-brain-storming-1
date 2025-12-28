@@ -1,9 +1,9 @@
 // ============================================
 // AI Brainstorm - Context Builder
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
-import type { Agent, Conversation, Message, UserInterjection, Notebook } from '../types';
+import type { Agent, Conversation, Message, UserInterjection, Notebook, DistilledMemory } from '../types';
 import type { LLMMessage } from '../llm/types';
 import { buildSystemPrompt, calculateWordLimit, getDepthConfig } from '../llm/prompt-builder';
 import { countTokens } from '../llm/token-counter';
@@ -16,11 +16,13 @@ export interface ContextComponents {
   interjections: UserInterjection[];
   messages: Message[];
   promptMessages: LLMMessage[];
+  distilledMemoryUsed: boolean;
 }
 
 export interface BuildOptions {
   isFirstTurn?: boolean;
   currentRound?: number;
+  distilledMemory?: DistilledMemory | null;
 }
 
 /**
@@ -40,6 +42,14 @@ export class ContextBuilder {
 
   /**
    * Build complete context for an agent's turn
+   * 
+   * @param agent - The agent to build context for
+   * @param allAgents - All agents in the conversation
+   * @param messages - All conversation messages
+   * @param interjections - User interjections
+   * @param notebook - Agent's notebook (if any)
+   * @param secretarySummary - Secretary's current summary (if available)
+   * @param options - Build options including distilled memory
    */
   build(
     agent: Agent,
@@ -52,6 +62,7 @@ export class ContextBuilder {
   ): ContextComponents {
     const isFirstTurn = options.isFirstTurn ?? (messages.filter(m => m.type === 'response').length === 0);
     const currentRound = options.currentRound ?? this.conversation.currentRound;
+    const distilledMemory = options.distilledMemory;
 
     // Build system prompt with word limit instruction
     let systemPrompt = buildSystemPrompt(agent, this.conversation);
@@ -67,6 +78,26 @@ export class ContextBuilder {
     // Calculate budget
     const budget = this.strategy.calculateBudget(systemTokens);
 
+    // Determine if we should use distilled memory
+    // Use it if we have one and there are messages beyond the last distilled point
+    const useDistilledMemory = this.shouldUseDistilledMemory(distilledMemory, messages);
+
+    // Filter messages based on distillation status
+    // If using distilled memory, only include messages after the last distilled message
+    let messagesToSelect = messages;
+    if (useDistilledMemory && distilledMemory) {
+      const lastDistilledIdx = messages.findIndex(m => m.id === distilledMemory.lastDistilledMessageId);
+      if (lastDistilledIdx >= 0) {
+        messagesToSelect = messages.slice(lastDistilledIdx + 1);
+      }
+    }
+
+    // Adjust message budget if using distilled memory (reserve space for distilled content)
+    const distilledMemoryTokens = useDistilledMemory && distilledMemory 
+      ? this.estimateDistilledMemoryTokens(distilledMemory)
+      : 0;
+    const adjustedMessageBudget = budget.messages - distilledMemoryTokens;
+
     // Select and truncate components
     const truncatedNotebook = notebook?.notes 
       ? this.strategy.truncateNotebook(notebook.notes, budget.notebook)
@@ -77,10 +108,12 @@ export class ContextBuilder {
       budget.interjections
     );
 
+    // Pass currentRound for time decay scoring
     const selectedMessages = this.strategy.selectMessages(
-      messages,
-      budget.messages,
-      agent.id
+      messagesToSelect,
+      adjustedMessageBudget,
+      agent.id,
+      currentRound
     );
 
     // Build LLM messages
@@ -93,7 +126,8 @@ export class ContextBuilder {
       truncatedNotebook,
       secretarySummary,
       isFirstTurn,
-      currentRound
+      currentRound,
+      useDistilledMemory ? distilledMemory : null
     );
 
     return {
@@ -102,7 +136,51 @@ export class ContextBuilder {
       interjections: selectedInterjections,
       messages: selectedMessages,
       promptMessages,
+      distilledMemoryUsed: useDistilledMemory,
     };
+  }
+
+  /**
+   * Determine if we should use distilled memory
+   */
+  private shouldUseDistilledMemory(
+    distilledMemory: DistilledMemory | null | undefined,
+    messages: Message[]
+  ): boolean {
+    if (!distilledMemory) return false;
+    if (!distilledMemory.distilledSummary) return false;
+    if (distilledMemory.totalMessagesDistilled === 0) return false;
+    
+    // Only use if we have messages beyond the distillation point
+    if (distilledMemory.lastDistilledMessageId) {
+      const lastIdx = messages.findIndex(m => m.id === distilledMemory.lastDistilledMessageId);
+      // Use distillation if there are newer messages
+      return lastIdx >= 0 && lastIdx < messages.length - 1;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Estimate token usage for distilled memory content
+   */
+  private estimateDistilledMemoryTokens(memory: DistilledMemory): number {
+    let tokens = 0;
+    
+    // Distilled summary
+    if (memory.distilledSummary) {
+      tokens += countTokens(memory.distilledSummary) + 20; // overhead for formatting
+    }
+    
+    // Pinned facts (estimate ~20 tokens per fact)
+    tokens += memory.pinnedFacts.length * 20;
+    
+    // Current stance
+    if (memory.currentStance) {
+      tokens += countTokens(memory.currentStance) + 10;
+    }
+    
+    return tokens;
   }
 
   /**
@@ -146,7 +224,8 @@ export class ContextBuilder {
     notebook: string,
     secretarySummary?: string,
     isFirstTurn: boolean = false,
-    currentRound: number = 0
+    currentRound: number = 0,
+    distilledMemory: DistilledMemory | null = null
   ): LLMMessage[] {
     const result: LLMMessage[] = [];
 
@@ -195,6 +274,15 @@ export class ContextBuilder {
       });
     }
 
+    // Distilled memory context (provides compressed history of earlier rounds)
+    // This goes before secretary summary as it provides foundational context
+    if (distilledMemory && distilledMemory.distilledSummary) {
+      result.push({
+        role: 'system',
+        content: this.formatDistilledMemory(distilledMemory),
+      });
+    }
+
     // Secretary summary (if available)
     if (secretarySummary) {
       result.push({
@@ -228,6 +316,51 @@ export class ContextBuilder {
     result.push(this.buildFinalPrompt(agent, allAgents, isFirstTurn));
 
     return result;
+  }
+
+  /**
+   * Format distilled memory into a context block
+   */
+  private formatDistilledMemory(memory: DistilledMemory): string {
+    const parts: string[] = [];
+    
+    parts.push('DISCUSSION HISTORY (summarized from earlier rounds):');
+    
+    // Main distilled summary
+    if (memory.distilledSummary) {
+      parts.push(memory.distilledSummary);
+    }
+    
+    // Current stance
+    if (memory.currentStance) {
+      parts.push(`\nCurrent discussion state: ${memory.currentStance}`);
+    }
+    
+    // Key decisions (if any)
+    if (memory.keyDecisions && memory.keyDecisions.length > 0) {
+      parts.push(`\nKey decisions made: ${memory.keyDecisions.join('; ')}`);
+    }
+    
+    // Open questions (if any)
+    if (memory.openQuestions && memory.openQuestions.length > 0) {
+      parts.push(`\nOpen questions: ${memory.openQuestions.join('; ')}`);
+    }
+    
+    // Pinned facts (important anchors - show top importance facts)
+    const importantFacts = memory.pinnedFacts
+      .filter(f => f.importance >= 7)
+      .sort((a, b) => b.importance - a.importance)
+      .slice(0, 5);
+    
+    if (importantFacts.length > 0) {
+      const factsList = importantFacts.map(f => {
+        const source = f.source ? ` (${f.source})` : '';
+        return `- [${f.category}]${source}: ${f.content}`;
+      }).join('\n');
+      parts.push(`\nKey facts/decisions:\n${factsList}`);
+    }
+    
+    return parts.join('\n');
   }
 
   /**

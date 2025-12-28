@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.9.0
+// Version: 2.11.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -11,7 +11,7 @@ import { TurnExecutor, TurnResult } from './turn-executor';
 import { ResultManager } from './result-manager';
 import { UserInterjectionHandler } from './user-interjection';
 import { ConversationStateMachine } from './state-machine';
-import { conversationStorage, turnStorage, messageStorage, notebookStorage, interjectionStorage, reactionStorage } from '../storage/storage-manager';
+import { conversationStorage, turnStorage, messageStorage, notebookStorage, interjectionStorage, reactionStorage, distilledMemoryStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
 import { selectFirstSpeaker, getStrategyById } from '../strategies/starting-strategies';
@@ -31,6 +31,13 @@ export interface ConversationEngineOptions {
  * Main orchestrator for multi-agent discussions
  */
 export class ConversationEngine {
+  private static getActiveConversationSet(): Set<string> {
+    const key = '__brainstormActiveConversationIds';
+    const g = globalThis as any;
+    if (!g[key]) g[key] = new Set<string>();
+    return g[key] as Set<string>;
+  }
+
   private conversation: Conversation;
   private agents: Agent[] = [];
   private secretary: SecretaryAgent | null = null;
@@ -95,6 +102,7 @@ export class ConversationEngine {
     this.completedAgentsInRound.clear();
     this.currentTurnAgentId = null;
 
+    ConversationEngine.getActiveConversationSet().add(this.conversation.id);
     await this.updateConversationStatus('running');
     eventBus.emit('conversation:started', this.conversation.id);
 
@@ -113,6 +121,7 @@ export class ConversationEngine {
     }
 
     this.turnExecutor?.abort();
+    ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
     await this.updateConversationStatus('paused');
     eventBus.emit('conversation:paused', this.conversation.id);
   }
@@ -125,6 +134,7 @@ export class ConversationEngine {
       return;
     }
 
+    ConversationEngine.getActiveConversationSet().add(this.conversation.id);
     await this.updateConversationStatus('running');
     eventBus.emit('conversation:resumed', this.conversation.id);
 
@@ -138,6 +148,7 @@ export class ConversationEngine {
     this.turnExecutor?.abort();
     
     if (this.stateMachine.transition('completed')) {
+      ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
       await this.updateConversationStatus('completed');
       
       // Generate final result draft
@@ -154,6 +165,7 @@ export class ConversationEngine {
   async reset(): Promise<void> {
     this.turnExecutor?.abort();
     this.stateMachine.reset();
+    ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
 
     // Delete reactions tied to this conversation's messages (prevents orphaned reactions)
     const existingMessages = await messageStorage.getByConversation(this.conversation.id);
@@ -170,6 +182,9 @@ export class ConversationEngine {
 
     // Clear all agent notebooks
     await notebookStorage.clearAllForConversation(this.conversation.id);
+
+    // Clear distilled memory
+    await distilledMemoryStorage.delete(this.conversation.id);
 
     // Reset conversation state (including dynamic round decision)
     await conversationStorage.update(this.conversation.id, {
@@ -433,6 +448,12 @@ export class ConversationEngine {
       return; // Stop processing, conversation will be completed
     }
 
+    // Trigger context distillation if secretary is available
+    // This compresses older messages into a summary to manage context window
+    if (this.secretary) {
+      await this.triggerDistillationIfNeeded(round);
+    }
+
     // Update result draft incrementally
     await this.resultManager.incrementalUpdate(round);
 
@@ -495,6 +516,31 @@ export class ConversationEngine {
   }
 
   /**
+   * Trigger context distillation if conditions are met
+   * Distillation compresses older messages into a summary to manage context window
+   */
+  private async triggerDistillationIfNeeded(completedRound: number): Promise<void> {
+    if (!this.secretary) return;
+
+    try {
+      // Check if distillation is needed
+      const shouldDistill = await this.secretary.shouldDistill();
+      
+      if (shouldDistill) {
+        console.log(`[Engine] Triggering context distillation after round ${completedRound}`);
+        
+        // Distill up to the completed round (leave current round raw)
+        await this.secretary.distillConversation(completedRound);
+        
+        console.log(`[Engine] Context distillation completed`);
+      }
+    } catch (error) {
+      // Log but don't fail the round completion
+      console.warn('[Engine] Context distillation failed:', error);
+    }
+  }
+
+  /**
    * Generate final comprehensive result and complete conversation
    */
   private async generateFinalResult(): Promise<void> {
@@ -515,6 +561,7 @@ export class ConversationEngine {
 
     // Complete the conversation
     if (this.stateMachine.transition('completed')) {
+      ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
       await this.updateConversationStatus('completed');
       eventBus.emit('conversation:stopped', this.conversation.id);
     }
@@ -796,7 +843,8 @@ export class ConversationEngine {
 
     // Recovery: If conversation status is 'running' but we're loading fresh,
     // it means the page was refreshed mid-run. Recover to 'paused' state.
-    if (conversation.status === 'running') {
+    const activeIds = ConversationEngine.getActiveConversationSet();
+    if (conversation.status === 'running' && !activeIds.has(conversationId)) {
       console.log(`[Engine] Recovering interrupted conversation ${conversationId}`);
       
       // Mark any running turns as failed (they will be retried on resume)

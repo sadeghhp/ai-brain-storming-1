@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Prompt Builder
-// Version: 1.4.0
+// Version: 1.5.1
 // ============================================
 
 import type { LLMMessage } from './types';
@@ -541,5 +541,211 @@ export function buildNotePrompt(message: string, existingNotes: string): LLMMess
 export function creativityToTemperature(level: number): number {
   // Map 1-5 scale to 0.3-1.0 temperature
   return 0.3 + ((level - 1) / 4) * 0.7;
+}
+
+// ============================================
+// Context Distillation Prompts
+// ============================================
+
+/**
+ * JSON schema for distillation output
+ */
+export interface DistillationOutput {
+  distilledSummary: string;
+  currentStance: string;
+  keyDecisions: string[];
+  openQuestions: string[];
+  constraints: string[];
+  actionItems: string[];
+  pinnedFacts: {
+    content: string;
+    category: 'decision' | 'constraint' | 'definition' | 'consensus' | 'disagreement' | 'action';
+    source?: string;
+    importance: number;
+  }[];
+}
+
+/**
+ * Build a distillation prompt for compressing older conversation messages
+ * into a compact, structured summary while preserving key context.
+ * 
+ * @param messages - Messages to distill (older messages that will be replaced by summary)
+ * @param agents - All agents in the conversation
+ * @param existingDistillation - Previous distillation to merge with
+ * @param conversationSubject - The subject/topic of the conversation
+ * @param targetLanguage - Optional target language for the distillation
+ */
+export function buildDistillationPrompt(
+  messages: Message[],
+  agents: Agent[],
+  existingDistillation: {
+    distilledSummary?: string;
+    currentStance?: string;
+    keyDecisions?: string[];
+    openQuestions?: string[];
+    constraints?: string[];
+    actionItems?: string[];
+    pinnedFacts?: { content: string; category: string; source?: string; importance: number }[];
+  } | null,
+  conversationSubject: string,
+  targetLanguage?: string
+): LLMMessage[] {
+  const agentMap = new Map(agents.map(a => [a.id, a.name]));
+  
+  // Format messages for distillation
+  const conversationText = messages.map(m => {
+    const senderName = m.agentId ? agentMap.get(m.agentId) || 'Unknown' : 'System';
+    return `[${senderName}]: ${m.content}`;
+  }).join('\n\n');
+
+  // Build context about existing distillation
+  let existingContext = '';
+  if (existingDistillation) {
+    const parts: string[] = [];
+    
+    if (existingDistillation.distilledSummary) {
+      parts.push(`Previous Summary:\n${existingDistillation.distilledSummary}`);
+    }
+    if (existingDistillation.currentStance) {
+      parts.push(`Previous Stance:\n${existingDistillation.currentStance}`);
+    }
+    if (existingDistillation.keyDecisions?.length) {
+      parts.push(`Previous Decisions:\n- ${existingDistillation.keyDecisions.join('\n- ')}`);
+    }
+    if (existingDistillation.openQuestions?.length) {
+      parts.push(`Previous Open Questions:\n- ${existingDistillation.openQuestions.join('\n- ')}`);
+    }
+    if (existingDistillation.pinnedFacts?.length) {
+      parts.push(`Previous Pinned Facts:\n${existingDistillation.pinnedFacts.map(f => `- [${f.category}] ${f.content}`).join('\n')}`);
+    }
+    
+    if (parts.length > 0) {
+      existingContext = `\n\nEXISTING DISTILLATION (merge with new insights):\n${parts.join('\n\n')}`;
+    }
+  }
+
+  let systemPrompt = `You are a skilled conversation analyst. Your task is to distill conversation messages into a compact, structured summary that preserves the essential context while dramatically reducing the token count.
+
+CONVERSATION TOPIC: ${conversationSubject}
+
+Your goals:
+1. Preserve ALL important decisions, conclusions, and facts
+2. Maintain understanding of where the discussion currently stands
+3. Identify key terms, constraints, and consensus/disagreement points
+4. Remove redundancy, filler, and superseded information
+5. Create a summary that allows participants to continue the discussion seamlessly
+
+You MUST respond with valid JSON matching this exact structure:
+{
+  "distilledSummary": "A concise narrative (150-300 words) capturing the essence of the discussion. Include who said what when it's important for context.",
+  "currentStance": "Brief description of where the discussion currently stands (1-2 sentences)",
+  "keyDecisions": ["Array of concrete decisions that have been made"],
+  "openQuestions": ["Array of unresolved questions still being discussed"],
+  "constraints": ["Array of constraints or requirements identified"],
+  "actionItems": ["Array of agreed action items or next steps"],
+  "pinnedFacts": [
+    {
+      "content": "A key fact, term, or decision that must be preserved",
+      "category": "decision|constraint|definition|consensus|disagreement|action",
+      "source": "Name of participant who introduced this (optional)",
+      "importance": 1-10
+    }
+  ]
+}
+
+IMPORTANT RULES:
+- Be ruthlessly concise while preserving meaning
+- Remove information that has been superseded by later discussion
+- Merge similar points rather than listing redundantly
+- Preserve direct quotes only if critically important
+- Keep pinnedFacts to max 10 most important items (importance >= 7)
+- If merging with existing distillation, update rather than duplicate`;
+
+  if (targetLanguage) {
+    systemPrompt += `\n\nIMPORTANT: Write ALL content in ${targetLanguage}. The JSON keys remain in English, but all string values must be in ${targetLanguage}.`;
+  }
+
+  const userPrompt = `Distill the following conversation segment into structured JSON:
+${existingContext}
+
+NEW MESSAGES TO DISTILL:
+${conversationText}
+
+Respond ONLY with the JSON object, no other text.`;
+
+  return [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+}
+
+/**
+ * Parse the distillation response from the LLM
+ * Returns null if parsing fails
+ */
+export function parseDistillationResponse(response: string): DistillationOutput | null {
+  try {
+    // Try to extract JSON from the response (handle potential markdown code blocks)
+    let jsonString = response.trim();
+    
+    // Remove markdown code block if present
+    if (jsonString.startsWith('```json')) {
+      jsonString = jsonString.slice(7);
+    } else if (jsonString.startsWith('```')) {
+      jsonString = jsonString.slice(3);
+    }
+    if (jsonString.endsWith('```')) {
+      jsonString = jsonString.slice(0, -3);
+    }
+    jsonString = jsonString.trim();
+
+    // First attempt: parse as-is
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch {
+      // Second attempt: extract the first JSON object block (handles extra commentary)
+      const match = jsonString.match(/\{[\s\S]*\}/);
+      if (!match) return null;
+      parsed = JSON.parse(match[0]);
+    }
+    
+    // Validate required fields
+    if (typeof parsed.distilledSummary !== 'string') {
+      console.error('[Distillation] Invalid response: missing distilledSummary');
+      return null;
+    }
+    
+    // Normalize and validate the output
+    const output: DistillationOutput = {
+      distilledSummary: parsed.distilledSummary || '',
+      currentStance: parsed.currentStance || '',
+      keyDecisions: Array.isArray(parsed.keyDecisions) ? parsed.keyDecisions.filter((d: unknown) => typeof d === 'string') : [],
+      openQuestions: Array.isArray(parsed.openQuestions) ? parsed.openQuestions.filter((q: unknown) => typeof q === 'string') : [],
+      constraints: Array.isArray(parsed.constraints) ? parsed.constraints.filter((c: unknown) => typeof c === 'string') : [],
+      actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems.filter((a: unknown) => typeof a === 'string') : [],
+      pinnedFacts: [],
+    };
+    
+    // Parse pinned facts with validation
+    if (Array.isArray(parsed.pinnedFacts)) {
+      for (const fact of parsed.pinnedFacts) {
+        if (fact && typeof fact.content === 'string') {
+          const validCategories = ['decision', 'constraint', 'definition', 'consensus', 'disagreement', 'action'];
+          output.pinnedFacts.push({
+            content: fact.content,
+            category: validCategories.includes(fact.category) ? fact.category : 'definition',
+            source: typeof fact.source === 'string' ? fact.source : undefined,
+            importance: typeof fact.importance === 'number' ? Math.min(10, Math.max(1, fact.importance)) : 5,
+          });
+        }
+      }
+    }
+    
+    return output;
+  } catch (error) {
+    console.error('[Distillation] Failed to parse response:', error);
+    return null;
+  }
 }
 
