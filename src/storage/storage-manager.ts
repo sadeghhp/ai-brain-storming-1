@@ -160,6 +160,23 @@ export const agentStorage = {
       await db.agents.delete(id);
     });
   },
+
+  async reorder(conversationId: string, agentIds: string[]): Promise<Agent[]> {
+    const agents = await db.agents.where('conversationId').equals(conversationId).toArray();
+    const agentMap = new Map(agents.map(a => [a.id, a]));
+    
+    const updatedAgents: Agent[] = [];
+    for (let i = 0; i < agentIds.length; i++) {
+      const agent = agentMap.get(agentIds[i]);
+      if (agent) {
+        const updated = { ...agent, order: i };
+        await db.agents.put(updated);
+        updatedAgents.push(updated);
+      }
+    }
+    
+    return updatedAgents.sort((a, b) => a.order - b.order);
+  },
 };
 
 // ============================================
@@ -335,9 +352,19 @@ export const resultDraftStorage = {
     const existing = await db.resultDrafts.get(conversationId);
     const draft: ResultDraft = {
       conversationId,
+      // Legacy fields
       content: existing?.content || '',
       summary: existing?.summary || '',
       keyDecisions: existing?.keyDecisions || '',
+      // New structured fields
+      executiveSummary: existing?.executiveSummary || '',
+      themes: existing?.themes || [],
+      consensusAreas: existing?.consensusAreas || '',
+      disagreements: existing?.disagreements || '',
+      recommendations: existing?.recommendations || '',
+      actionItems: existing?.actionItems || '',
+      openQuestions: existing?.openQuestions || '',
+      roundSummaries: existing?.roundSummaries || [],
       ...data,
       updatedAt: Date.now(),
     };
@@ -351,6 +378,18 @@ export const resultDraftStorage = {
     return this.update(conversationId, {
       content: currentContent ? `${currentContent}\n\n${content}` : content,
     });
+  },
+
+  async appendRoundSummary(conversationId: string, summary: string): Promise<ResultDraft> {
+    const existing = await db.resultDrafts.get(conversationId);
+    const roundSummaries = existing?.roundSummaries || [];
+    return this.update(conversationId, {
+      roundSummaries: [...roundSummaries, summary],
+    });
+  },
+
+  async updateThemes(conversationId: string, themes: string[]): Promise<ResultDraft> {
+    return this.update(conversationId, { themes });
   },
 };
 

@@ -83,9 +83,19 @@ export interface Notebook {
 
 export interface ResultDraft {
   conversationId: string;
+  // Legacy fields (kept for backward compatibility)
   content: string;
   summary: string;
   keyDecisions: string;
+  // New structured fields
+  executiveSummary: string;
+  themes: string[];              // Main themes identified in discussion
+  consensusAreas: string;        // Where agents agreed
+  disagreements: string;         // Where agents disagreed  
+  recommendations: string;       // Secretary's neutral recommendations
+  actionItems: string;           // Concrete next steps
+  openQuestions: string;         // Unresolved questions
+  roundSummaries: string[];      // Array of round-by-round summaries
   updatedAt: number;
 }
 

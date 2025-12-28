@@ -1,10 +1,11 @@
 // ============================================
 // AI Brainstorm - Navigation Sidebar Component
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { conversationStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
+import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { formatRelativeTime, truncate } from '../utils/helpers';
 import type { Conversation } from '../types';
 
@@ -40,6 +41,8 @@ export class NavSidebar extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
+        ${shadowBaseStyles}
+
         :host {
           display: flex;
           flex-direction: column;

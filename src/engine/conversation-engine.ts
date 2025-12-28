@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -11,7 +11,7 @@ import { TurnExecutor, TurnResult } from './turn-executor';
 import { ResultManager } from './result-manager';
 import { UserInterjectionHandler } from './user-interjection';
 import { ConversationStateMachine } from './state-machine';
-import { conversationStorage, turnStorage } from '../storage/storage-manager';
+import { conversationStorage, turnStorage, messageStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
 import type { Conversation, Turn, Message, ConversationStatus, ConversationMode } from '../types';
@@ -310,17 +310,32 @@ export class ConversationEngine {
     this.turnManager?.advanceRound();
     this.interjectionHandler.setCurrentRound(this.conversation.currentRound);
 
-    // Generate secretary summary (if exists)
+    // Generate secretary round summary (if exists)
+    // This summary is stored as a visible system message so agents can reference it
     if (this.secretary) {
       try {
-        const statusUpdate = await this.secretary.generateStatusUpdate(round);
-        console.log(`[Engine] ${statusUpdate}`);
+        const roundSummary = await this.secretary.generateRoundSummary(round);
+        
+        if (roundSummary) {
+          // Store the summary as a system message so it appears in the conversation
+          // and is visible to all agents in subsequent turns
+          const summaryMessage = await messageStorage.create({
+            conversationId: this.conversation.id,
+            agentId: this.secretary.id,
+            content: `**Round ${round} Summary:**\n\n${roundSummary}`,
+            round: round,
+            type: 'summary',
+          });
+          
+          eventBus.emit('message:created', summaryMessage);
+          console.log(`[Engine] Secretary generated round ${round} summary`);
+        }
       } catch (error) {
-        console.warn('[Engine] Secretary update failed:', error);
+        console.warn('[Engine] Secretary round summary failed:', error);
       }
     }
 
-    // Update result draft
+    // Update result draft incrementally
     await this.resultManager.incrementalUpdate(round);
 
     // Mark interjections as processed

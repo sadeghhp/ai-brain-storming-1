@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation View Component
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -9,8 +9,9 @@ import './message-stream';
 import './agent-roster';
 import './control-bar';
 import './result-draft';
+import './secretary-panel';
 import './user-input';
-// Types not currently used but reserved for future enhancements
+import './conversation-settings-modal';
 
 export class ConversationView extends HTMLElement {
   private engine: ConversationEngine | null = null;
@@ -75,6 +76,12 @@ export class ConversationView extends HTMLElement {
     eventBus.on('conversation:stopped', (id) => {
       if (id === this.conversationId) {
         this.updateControlBar();
+      }
+    });
+
+    eventBus.on('conversation:updated', (conv) => {
+      if (conv.id === this.conversationId) {
+        this.loadConversation();
       }
     });
   }
@@ -309,11 +316,63 @@ export class ConversationView extends HTMLElement {
         }
 
         .result-panel {
-          width: var(--result-panel-width, 360px);
+          width: var(--result-panel-width, 400px);
           border-left: 1px solid var(--color-border);
           flex-shrink: 0;
           display: flex;
           flex-direction: column;
+        }
+
+        .panel-tabs {
+          display: flex;
+          background: var(--color-bg-tertiary);
+          border-bottom: 1px solid var(--color-border);
+        }
+
+        .panel-tab {
+          flex: 1;
+          padding: var(--space-2) var(--space-3);
+          background: transparent;
+          border: none;
+          border-bottom: 2px solid transparent;
+          color: var(--color-text-secondary);
+          font-size: var(--text-sm);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-1);
+        }
+
+        .panel-tab:hover {
+          color: var(--color-text-primary);
+          background: var(--color-surface);
+        }
+
+        .panel-tab.active {
+          color: var(--color-secondary);
+          border-bottom-color: var(--color-secondary);
+        }
+
+        .panel-tab svg {
+          width: 14px;
+          height: 14px;
+        }
+
+        .panel-container {
+          flex: 1;
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        .panel-content {
+          display: none;
+          height: 100%;
+        }
+
+        .panel-content.active {
+          display: block;
         }
 
         .control-area {
@@ -325,6 +384,30 @@ export class ConversationView extends HTMLElement {
           font-size: var(--text-sm);
           color: var(--color-text-tertiary);
         }
+
+        .settings-btn {
+          padding: var(--space-2);
+          background: transparent;
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          color: var(--color-text-secondary);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .settings-btn:hover {
+          background: var(--color-surface);
+          border-color: var(--color-border-strong);
+          color: var(--color-text-primary);
+        }
+
+        .settings-btn svg {
+          width: 18px;
+          height: 18px;
+        }
       </style>
 
       <header class="conversation-header">
@@ -335,8 +418,16 @@ export class ConversationView extends HTMLElement {
         <div class="conv-meta">
           <span class="round-indicator">Round ${conversation.currentRound}</span>
           <span class="status-badge status-${conversation.status}">${conversation.status}</span>
+          <button class="settings-btn" id="settings-btn" title="Conversation Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
         </div>
       </header>
+
+      <conversation-settings-modal id="conv-settings-modal" conversation-id="${conversation.id}"></conversation-settings-modal>
 
       <agent-roster conversation-id="${conversation.id}"></agent-roster>
 
@@ -346,7 +437,31 @@ export class ConversationView extends HTMLElement {
           <user-input conversation-id="${conversation.id}"></user-input>
         </div>
         <aside class="result-panel">
-          <result-draft conversation-id="${conversation.id}"></result-draft>
+          <div class="panel-tabs">
+            <button class="panel-tab active" data-panel="secretary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="8.5" cy="7" r="4"/>
+                <path d="M20 8v6M23 11h-6"/>
+              </svg>
+              Secretary
+            </button>
+            <button class="panel-tab" data-panel="draft">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              Draft
+            </button>
+          </div>
+          <div class="panel-container">
+            <div class="panel-content active" id="secretary-panel-content">
+              <secretary-panel conversation-id="${conversation.id}"></secretary-panel>
+            </div>
+            <div class="panel-content" id="draft-panel-content">
+              <result-draft conversation-id="${conversation.id}"></result-draft>
+            </div>
+          </div>
         </aside>
       </div>
 
@@ -367,6 +482,31 @@ export class ConversationView extends HTMLElement {
       controlBar.addEventListener('stop', () => this.engine?.stop());
       controlBar.addEventListener('reset', () => this.engine?.reset());
     }
+
+    // Set up settings button
+    const settingsBtn = this.shadowRoot.getElementById('settings-btn');
+    settingsBtn?.addEventListener('click', () => {
+      const settingsModal = this.shadowRoot?.getElementById('conv-settings-modal') as HTMLElement;
+      settingsModal?.setAttribute('open', 'true');
+    });
+
+    // Set up panel tab switching
+    this.shadowRoot.querySelectorAll('.panel-tab').forEach(tab => {
+      tab.addEventListener('click', (e) => {
+        const target = e.currentTarget as HTMLElement;
+        const panelName = target.dataset.panel;
+        if (!panelName) return;
+
+        // Update active tab
+        this.shadowRoot?.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+        target.classList.add('active');
+
+        // Update active panel content
+        this.shadowRoot?.querySelectorAll('.panel-content').forEach(p => p.classList.remove('active'));
+        const panelContent = this.shadowRoot?.getElementById(`${panelName}-panel-content`);
+        panelContent?.classList.add('active');
+      });
+    });
   }
 
   private renderEmpty() {

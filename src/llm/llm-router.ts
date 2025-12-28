@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - LLM Router
-// Version: 2.0.0
+// Version: 2.1.0
 // ============================================
 
 import { OpenAIProvider } from './providers/openai-provider';
@@ -16,7 +16,7 @@ import type {
   LLMModel,
   LLMProviderConfig,
 } from './types';
-import type { LLMProvider as LLMProviderEntity, ApiFormat } from '../types';
+import type { LLMProvider as LLMProviderEntity, ApiFormat, ProviderModel } from '../types';
 
 /**
  * LLM Router - Routes requests to the appropriate provider
@@ -174,6 +174,51 @@ class LLMRouterService {
     this.modelsCache.set(providerId, models);
 
     return models;
+  }
+
+  /**
+   * Fetch models from a provider and return as ProviderModel[] for storage
+   * This is used to auto-fetch models and persist them in provider storage
+   */
+  async fetchModelsForStorage(providerId: string): Promise<ProviderModel[]> {
+    const provider = this.providers.get(providerId);
+    if (!provider) {
+      console.warn(`[LLMRouter] Provider not found: ${providerId}`);
+      return [];
+    }
+
+    try {
+      // Use the provider's direct fetchModels() to get fresh models from API
+      const llmModels = await provider.fetchModels();
+      
+      // Convert LLMModel[] to ProviderModel[] for storage
+      const providerModels: ProviderModel[] = llmModels.map(m => ({
+        id: m.id,
+        name: m.name,
+        contextLength: m.contextLength,
+        isCustom: false, // Auto-fetched models are not custom
+      }));
+
+      // Sort by name
+      providerModels.sort((a, b) => a.name.localeCompare(b.name));
+
+      // Clear cache so next getModels() will include these
+      this.modelsCache.delete(providerId);
+
+      return providerModels;
+    } catch (error) {
+      console.error(`[LLMRouter] Failed to fetch models for provider ${providerId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Check if a provider supports model auto-fetching
+   * (i.e., has a working fetchModels implementation)
+   */
+  canAutoFetchModels(providerId: string): boolean {
+    const provider = this.providers.get(providerId);
+    return provider?.isConfigured() ?? false;
   }
 
   /**

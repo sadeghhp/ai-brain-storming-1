@@ -1,11 +1,12 @@
 // ============================================
 // AI Brainstorm - Settings Panel Component
-// Version: 2.0.0
+// Version: 2.1.0
 // ============================================
 
 import { settingsStorage, providerStorage } from '../storage/storage-manager';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
+import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import type { AppSettings, LLMProvider, ApiFormat } from '../types';
 
 export class SettingsPanel extends HTMLElement {
@@ -32,11 +33,14 @@ export class SettingsPanel extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
+        ${shadowBaseStyles}
+
         :host {
           display: flex;
           flex-direction: column;
           height: 100%;
           background: var(--color-bg-primary);
+          overflow: hidden;
         }
 
         .settings-header {
@@ -72,8 +76,12 @@ export class SettingsPanel extends HTMLElement {
         .settings-content {
           flex: 1;
           overflow-y: auto;
+          overflow-x: hidden;
           padding: var(--space-6);
           max-width: 640px;
+          width: 100%;
+          margin: 0 auto;
+          min-height: 0;
         }
 
         .section {
@@ -143,11 +151,22 @@ export class SettingsPanel extends HTMLElement {
           align-items: center;
           justify-content: space-between;
           margin-bottom: var(--space-3);
+          gap: var(--space-3);
+        }
+
+        .provider-header > div:first-child {
+          min-width: 0;
+          flex: 1;
         }
 
         .provider-name {
+          display: block;
           font-weight: var(--font-semibold);
           color: var(--color-text-primary);
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .provider-status {
@@ -312,12 +331,14 @@ export class SettingsPanel extends HTMLElement {
         }
 
         .provider-format {
+          display: inline-block;
           font-size: var(--text-xs);
           color: var(--color-text-tertiary);
           margin-left: var(--space-2);
           padding: var(--space-1) var(--space-2);
           background: var(--color-bg-tertiary);
           border-radius: var(--radius-sm);
+          white-space: nowrap;
         }
 
         .provider-actions {
@@ -377,6 +398,9 @@ export class SettingsPanel extends HTMLElement {
           border-radius: var(--radius-sm);
           font-size: var(--text-xs);
           color: var(--color-text-secondary);
+          max-width: 100%;
+          overflow-wrap: anywhere;
+          word-break: break-word;
         }
 
         .model-tag.custom {

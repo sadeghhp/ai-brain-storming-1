@@ -1,10 +1,11 @@
 // ============================================
 // AI Brainstorm - Message Stream Component
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { messageStorage, agentStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
+import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { formatRelativeTime, escapeHtml, parseBasicFormatting } from '../utils/helpers';
 import type { Message, Agent } from '../types';
 
@@ -92,6 +93,8 @@ export class MessageStream extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
+        ${shadowBaseStyles}
+
         :host {
           display: flex;
           flex-direction: column;

@@ -1,11 +1,14 @@
 // ============================================
 // AI Brainstorm - Agent Roster Component
-// Version: 1.0.0
+// Version: 2.1.0
 // ============================================
 
-import { agentStorage } from '../storage/storage-manager';
+import { agentStorage, conversationStorage, providerStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
-import type { Agent } from '../types';
+import { shadowBaseStyles } from '../styles/shadow-base-styles';
+import type { Agent, Conversation, LLMProvider } from '../types';
+import './agent-editor-modal';
+import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
 
 type AgentStatus = 'idle' | 'thinking' | 'speaking';
 
@@ -13,6 +16,8 @@ export class AgentRoster extends HTMLElement {
   private agents: Agent[] = [];
   private agentStatuses: Map<string, AgentStatus> = new Map();
   private conversationId: string | null = null;
+  private conversation: Conversation | null = null;
+  private providers: LLMProvider[] = [];
 
   static get observedAttributes() {
     return ['conversation-id'];
@@ -40,9 +45,15 @@ export class AgentRoster extends HTMLElement {
     this.conversationId = this.getAttribute('conversation-id');
     if (!this.conversationId) return;
 
+    this.conversation = await conversationStorage.getById(this.conversationId) || null;
     this.agents = await agentStorage.getByConversation(this.conversationId);
+    this.providers = await providerStorage.getAll();
     this.agents.forEach(a => this.agentStatuses.set(a.id, 'idle'));
     this.renderAgents();
+  }
+
+  private isEditable(): boolean {
+    return this.conversation?.status !== 'running';
   }
 
   private setupEventListeners() {
@@ -60,6 +71,12 @@ export class AgentRoster extends HTMLElement {
       this.agentStatuses.set(agentId, 'idle');
       this.updateAgentStatus(agentId);
     });
+
+    // Refresh when conversation status changes
+    eventBus.on('conversation:started', () => this.loadAgents());
+    eventBus.on('conversation:paused', () => this.loadAgents());
+    eventBus.on('conversation:stopped', () => this.loadAgents());
+    eventBus.on('conversation:updated', () => this.loadAgents());
   }
 
   private render() {
@@ -67,6 +84,8 @@ export class AgentRoster extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
+        ${shadowBaseStyles}
+
         :host {
           display: block;
           padding: var(--space-3) var(--space-6);
@@ -78,20 +97,8 @@ export class AgentRoster extends HTMLElement {
           display: flex;
           gap: var(--space-3);
           overflow-x: auto;
+          overflow-y: hidden;
           padding-bottom: var(--space-2);
-        }
-
-        .roster::-webkit-scrollbar {
-          height: 4px;
-        }
-
-        .roster::-webkit-scrollbar-track {
-          background: transparent;
-        }
-
-        .roster::-webkit-scrollbar-thumb {
-          background: var(--color-border);
-          border-radius: var(--radius-full);
         }
 
         .agent-card {
@@ -102,13 +109,19 @@ export class AgentRoster extends HTMLElement {
           background: var(--color-surface);
           border: 1px solid var(--color-border);
           border-radius: var(--radius-lg);
-          cursor: default;
+          cursor: pointer;
           transition: all var(--transition-fast);
           flex-shrink: 0;
+          position: relative;
         }
 
         .agent-card:hover {
           background: var(--color-surface-hover);
+          border-color: var(--color-border-strong);
+        }
+
+        .agent-card.editable:hover {
+          border-color: var(--color-primary);
         }
 
         .agent-card.thinking {
@@ -123,6 +136,29 @@ export class AgentRoster extends HTMLElement {
 
         .agent-card.secretary {
           border-color: var(--color-secondary);
+        }
+
+        .agent-card .edit-indicator {
+          position: absolute;
+          top: -6px;
+          right: -6px;
+          width: 20px;
+          height: 20px;
+          background: var(--color-primary);
+          border-radius: var(--radius-full);
+          display: none;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          opacity: 0;
+          transform: scale(0.8);
+          transition: all var(--transition-fast);
+        }
+
+        .agent-card.editable:hover .edit-indicator {
+          display: flex;
+          opacity: 1;
+          transform: scale(1);
         }
 
         .avatar {
@@ -187,12 +223,77 @@ export class AgentRoster extends HTMLElement {
           padding: var(--space-4);
           text-align: center;
         }
+
+        .tooltip {
+          position: absolute;
+          bottom: calc(100% + 8px);
+          left: 50%;
+          transform: translateX(-50%);
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-bg-primary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          font-size: var(--text-xs);
+          color: var(--color-text-secondary);
+          white-space: nowrap;
+          opacity: 0;
+          visibility: hidden;
+          transition: all var(--transition-fast);
+          pointer-events: none;
+          z-index: 10;
+        }
+
+        .tooltip::after {
+          content: '';
+          position: absolute;
+          top: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          border: 5px solid transparent;
+          border-top-color: var(--color-border);
+        }
+
+        .agent-card:hover .tooltip {
+          opacity: 1;
+          visibility: visible;
+        }
       </style>
 
       <div class="roster" id="roster">
         <div class="empty-roster">Loading agents...</div>
       </div>
+
+      <agent-editor-modal id="agent-editor"></agent-editor-modal>
     `;
+
+    this.setupAgentEditorHandlers();
+  }
+
+  private setupAgentEditorHandlers() {
+    const agentEditor = this.shadowRoot?.getElementById('agent-editor') as AgentEditorModal;
+    
+    agentEditor?.addEventListener('agent:saved', async (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const { result, agentId } = customEvent.detail as { 
+        result: AgentEditorResult; 
+        agentId?: string;
+      };
+
+      if (agentId) {
+        await agentStorage.update(agentId, {
+          name: result.name,
+          role: result.role,
+          expertise: result.expertise,
+          llmProviderId: result.llmProviderId,
+          modelId: result.modelId,
+          thinkingDepth: result.thinkingDepth,
+          creativityLevel: result.creativityLevel,
+          notebookUsage: result.notebookUsage,
+        });
+      }
+
+      await this.loadAgents();
+    });
   }
 
   private renderAgents() {
@@ -204,12 +305,30 @@ export class AgentRoster extends HTMLElement {
       return;
     }
 
+    const editable = this.isEditable();
+
     roster.innerHTML = this.agents.map(agent => {
       const status = this.agentStatuses.get(agent.id) || 'idle';
       const initials = agent.name.slice(0, 2).toUpperCase();
+      const provider = this.providers.find(p => p.id === agent.llmProviderId);
+      const model = provider?.models.find(m => m.id === agent.modelId);
+      const tooltipText = editable 
+        ? `Click to edit • ${model?.name || agent.modelId}` 
+        : `${model?.name || agent.modelId} • Pause to edit`;
 
       return `
-        <div class="agent-card ${status} ${agent.isSecretary ? 'secretary' : ''}" data-id="${agent.id}">
+        <div class="agent-card ${status} ${agent.isSecretary ? 'secretary' : ''} ${editable ? 'editable' : ''}" 
+             data-id="${agent.id}" 
+             title="">
+          <div class="tooltip">${tooltipText}</div>
+          ${editable ? `
+            <div class="edit-indicator">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </div>
+          ` : ''}
           <div class="avatar" style="background: ${agent.color}20; color: ${agent.color};">
             ${initials}
             <div class="status-dot ${status}"></div>
@@ -221,6 +340,32 @@ export class AgentRoster extends HTMLElement {
         </div>
       `;
     }).join('');
+
+    // Add click handlers for editable cards
+    this.shadowRoot?.querySelectorAll('.agent-card.editable').forEach(card => {
+      card.addEventListener('click', () => {
+        const agentId = card.getAttribute('data-id');
+        if (agentId) {
+          this.openAgentEditor(agentId);
+        }
+      });
+    });
+  }
+
+  private openAgentEditor(agentId: string) {
+    const agentEditor = this.shadowRoot?.getElementById('agent-editor') as AgentEditorModal;
+    if (!agentEditor) return;
+
+    const agent = this.agents.find(a => a.id === agentId);
+    if (!agent) return;
+
+    agentEditor.configure({
+      mode: 'edit',
+      agent: agent,
+      conversationId: this.conversationId || undefined,
+    });
+
+    agentEditor.setAttribute('open', 'true');
   }
 
   private updateAgentStatus(agentId: string) {
@@ -240,4 +385,3 @@ export class AgentRoster extends HTMLElement {
 }
 
 customElements.define('agent-roster', AgentRoster);
-

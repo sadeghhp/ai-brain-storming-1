@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Result Manager
-// Version: 1.0.0
+// Version: 2.0.0
 // ============================================
 
 import { SecretaryAgent } from '../agents/secretary';
@@ -213,6 +213,14 @@ ${draft.keyDecisions || 'No key decisions recorded.'}
       content: '',
       summary: '',
       keyDecisions: '',
+      executiveSummary: '',
+      themes: [],
+      consensusAreas: '',
+      disagreements: '',
+      recommendations: '',
+      actionItems: '',
+      openQuestions: '',
+      roundSummaries: [],
     });
     this.lastUpdateRound = 0;
   }

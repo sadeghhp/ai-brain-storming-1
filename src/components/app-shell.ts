@@ -12,6 +12,7 @@ import './nav-sidebar';
 import './conversation-view';
 import './settings-panel';
 import './new-conversation-modal';
+import './conversation-settings-modal';
 
 /**
  * App Shell - Main application container
