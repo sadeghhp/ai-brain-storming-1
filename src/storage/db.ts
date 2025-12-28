@@ -1,0 +1,146 @@
+// ============================================
+// AI Brainstorm - Database Layer (Dexie/IndexedDB)
+// Version: 1.0.0
+// ============================================
+
+import Dexie, { type Table } from 'dexie';
+import type {
+  Conversation,
+  Turn,
+  Agent,
+  Message,
+  Notebook,
+  ResultDraft,
+  AgentPreset,
+  LLMProvider,
+  UserInterjection,
+  UserReaction,
+  AppSettings,
+} from '../types';
+
+export class BrainstormDB extends Dexie {
+  conversations!: Table<Conversation, string>;
+  turns!: Table<Turn, string>;
+  agents!: Table<Agent, string>;
+  messages!: Table<Message, string>;
+  notebooks!: Table<Notebook, string>;
+  resultDrafts!: Table<ResultDraft, string>;
+  agentPresets!: Table<AgentPreset, string>;
+  llmProviders!: Table<LLMProvider, string>;
+  userInterjections!: Table<UserInterjection, string>;
+  userReactions!: Table<UserReaction, string>;
+  appSettings!: Table<AppSettings, string>;
+
+  constructor() {
+    super('BrainstormDB');
+
+    this.version(1).stores({
+      // Primary key is first, then indexed fields
+      conversations: 'id, status, createdAt, updatedAt',
+      turns: 'id, conversationId, agentId, [conversationId+round], [conversationId+round+sequence], state',
+      agents: 'id, conversationId, [conversationId+order], isSecretary',
+      messages: 'id, conversationId, turnId, agentId, [conversationId+round], createdAt, type',
+      notebooks: 'agentId',
+      resultDrafts: 'conversationId',
+      agentPresets: 'id, category, isBuiltIn, name',
+      llmProviders: 'id, type, isActive',
+      userInterjections: 'id, conversationId, [conversationId+afterRound], processed',
+      userReactions: 'id, messageId',
+      appSettings: 'id',
+    });
+  }
+}
+
+// Singleton instance
+export const db = new BrainstormDB();
+
+// Initialize default settings if not exists
+export async function initializeDatabase(): Promise<void> {
+  const settings = await db.appSettings.get('app-settings');
+  if (!settings) {
+    await db.appSettings.put({
+      id: 'app-settings',
+      theme: 'dark',
+      defaultSpeedMs: 2000,
+      defaultMaxContextTokens: 8000,
+      defaultPlainTextOnly: false,
+      showKeyboardShortcuts: true,
+      autoScrollMessages: true,
+    });
+  }
+
+  // Initialize default LLM providers if none exist
+  const providersCount = await db.llmProviders.count();
+  if (providersCount === 0) {
+    await db.llmProviders.bulkPut([
+      {
+        id: 'openrouter-default',
+        name: 'OpenRouter',
+        type: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        isActive: false,
+      },
+      {
+        id: 'ollama-default',
+        name: 'Ollama (Local)',
+        type: 'ollama',
+        baseUrl: 'http://localhost:11434',
+        isActive: false,
+      },
+    ]);
+  }
+
+  console.log('[DB] Database initialized successfully');
+}
+
+// Utility to generate deterministic turn ID
+export function generateTurnId(conversationId: string, round: number, sequence: number): string {
+  return `${conversationId}-r${round}-s${sequence}`;
+}
+
+// Database health check
+export async function checkDatabaseHealth(): Promise<boolean> {
+  try {
+    await db.conversations.count();
+    return true;
+  } catch (error) {
+    console.error('[DB] Health check failed:', error);
+    return false;
+  }
+}
+
+// Clear all data (for reset)
+export async function clearAllData(): Promise<void> {
+  await db.transaction('rw', db.tables, async () => {
+    for (const table of db.tables) {
+      if (table.name !== 'appSettings' && table.name !== 'llmProviders' && table.name !== 'agentPresets') {
+        await table.clear();
+      }
+    }
+  });
+  console.log('[DB] All conversation data cleared');
+}
+
+// Export database for backup
+export async function exportDatabase(): Promise<object> {
+  const data: Record<string, unknown[]> = {};
+  for (const table of db.tables) {
+    data[table.name] = await table.toArray();
+  }
+  return data;
+}
+
+// Import database from backup
+export async function importDatabase(data: Record<string, unknown[]>): Promise<void> {
+  await db.transaction('rw', db.tables, async () => {
+    for (const [tableName, records] of Object.entries(data)) {
+      const table = db.tables.find(t => t.name === tableName);
+      if (table && Array.isArray(records)) {
+        await table.clear();
+        await table.bulkPut(records);
+      }
+    }
+  });
+  console.log('[DB] Database imported successfully');
+}
+

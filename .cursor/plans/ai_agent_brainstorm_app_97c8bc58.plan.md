@@ -4,30 +4,30 @@ overview: A browser-based multi-agent AI discussion platform built with vanilla 
 todos:
   - id: phase1-foundation
     content: "Phase 1: Project setup, TypeScript config, IndexedDB storage layer, data models"
-    status: pending
+    status: completed
   - id: phase2-llm
     content: "Phase 2: LLM service layer with OpenRouter and Ollama adapters"
-    status: pending
+    status: completed
     dependencies:
       - phase1-foundation
   - id: phase3-agents
     content: "Phase 3: Agent system with factory, presets, notebook, and secretary agent"
-    status: pending
+    status: completed
     dependencies:
       - phase2-llm
   - id: phase4-engine
     content: "Phase 4: Conversation engine with turn management (all 3 modes)"
-    status: pending
+    status: completed
     dependencies:
       - phase3-agents
   - id: phase5-ui
     content: "Phase 5: Web Components UI with all panels and controls"
-    status: pending
+    status: completed
     dependencies:
       - phase4-engine
   - id: phase6-advanced
     content: "Phase 6: Advanced features - reactions, export, search, polish"
-    status: pending
+    status: completed
     dependencies:
       - phase5-ui
 ---
@@ -36,19 +36,7 @@ todos:
 
 ## Key Technical Decisions
 
-| Decision | Choice | Rationale |
-
-|----------|--------|-----------|
-
-| API Key Storage | Persistent in IndexedDB | Keys stored globally, reusable across all sessions. Warning displayed about browser security limitations. |
-
-| Third-party Libraries | Allowed (reliable, small) | Dexie.js for IndexedDB, uuid for IDs, gpt-tokenizer for token counting |
-
-| Turn Idempotency | Deterministic turnId | Prevents duplicate executions on resume/retry |
-
-| Streaming Control | AbortController per turn | Enables reliable Stop/Pause mid-stream |
-
-| Ollama CORS | Connectivity test + setup guide | Browser-to-local Ollama requires CORS config |
+| Decision | Choice | Rationale ||----------|--------|-----------|| API Key Storage | Persistent in IndexedDB | Keys stored globally, reusable across all sessions. Warning displayed about browser security limitations. || Third-party Libraries | Allowed (reliable, small) | Dexie.js for IndexedDB, uuid for IDs, gpt-tokenizer for token counting || Turn Idempotency | Deterministic turnId | Prevents duplicate executions on resume/retry || Streaming Control | AbortController per turn | Enables reliable Stop/Pause mid-stream || Ollama CORS | Connectivity test + setup guide | Browser-to-local Ollama requires CORS config |
 
 ## Architecture Overview
 
@@ -98,6 +86,8 @@ graph TB
     StorageManager --> IndexedDBStore
     StorageManager --> LocalStorageCache
 ```
+
+
 
 ## Data Model
 
@@ -216,6 +206,8 @@ erDiagram
     }
 ```
 
+
+
 ### Turn States
 
 - `planned` - Scheduled but not started
@@ -256,9 +248,7 @@ Set up the project structure, build system, and core storage layer.**Key Files:*
 
 ### Phase 2: LLM Service Layer (Files: 6-7)
 
-Create the abstraction layer for LLM providers.
-
-**Key Files:**
+Create the abstraction layer for LLM providers.**Key Files:**
 
 - `src/llm/llm-router.ts` - Provider routing and request handling
 - `src/llm/providers/base-provider.ts` - Abstract provider interface
@@ -308,9 +298,7 @@ Build the agent creation, configuration, and preset system.**Key Files:**
 
 ### Phase 4: Conversation Engine (Files: 8-9)
 
-Core orchestration logic for managing discussions.
-
-**Key Files:**
+Core orchestration logic for managing discussions.**Key Files:**
 
 - `src/engine/conversation-engine.ts` - Main orchestrator with state machine
 - `src/engine/turn-manager.ts` - Turn-taking logic (all modes)
@@ -406,23 +394,7 @@ Polish and advanced functionality.**Features:**
 
 ## Tech Stack Summary
 
-| Layer | Technology |
-
-|-------|------------|
-
-| Language | TypeScript 5.x (strict mode) |
-
-| UI | Vanilla Web Components |
-
-| Build | Vite |
-
-| Storage | IndexedDB (Dexie.js) + LocalStorage |
-
-| Styling | CSS Custom Properties |
-
-| LLM | OpenRouter API + Ollama REST API |
-
-**Dependencies (minimal, reliable):**
+| Layer | Technology ||-------|------------|| Language | TypeScript 5.x (strict mode) || UI | Vanilla Web Components || Build | Vite || Storage | IndexedDB (Dexie.js) + LocalStorage || Styling | CSS Custom Properties || LLM | OpenRouter API + Ollama REST API |**Dependencies (minimal, reliable):**
 
 - `dexie` (~40KB) - IndexedDB wrapper with excellent TypeScript support
 - `uuid` (~2KB) - RFC4122 UUID generation
@@ -431,7 +403,7 @@ Polish and advanced functionality.**Features:**
 
 ## File Structure
 
-```
+```javascript
 ai-brain-storming-1/
 ├── index.html
 ├── package.json
@@ -496,6 +468,8 @@ ai-brain-storming-1/
     └── icons/
 ```
 
+
+
 ## UI Design Concept
 
 **Theme:** "Neural Nexus" - Dark futuristic with neon accents
@@ -524,18 +498,4 @@ ai-brain-storming-1/
 
 ## Risk Mitigation
 
-| Risk | Mitigation |
-
-|------|------------|
-
-| Ollama CORS blocked | Connectivity test + clear setup instructions in UI |
-
-| Context overflow | Token counting + auto-summarization of old rounds |
-
-| Double turn execution | Deterministic turnId + DB check before execution |
-
-| Lost state on crash | All turns persisted; resume from last completed turn |
-
-| API key exposure | Warning in UI; keys stored locally only, never transmitted except to provider |
-
-| Rate limiting | Exponential backoff; configurable delay between turns |
+| Risk | Mitigation ||------|------------|| Ollama CORS blocked | Connectivity test + clear setup instructions in UI || Context overflow | Token counting + auto-summarization of old rounds || Double turn execution | Deterministic turnId + DB check before execution || Lost state on crash | All turns persisted; resume from last completed turn || API key exposure | Warning in UI; keys stored locally only, never transmitted except to provider |
