@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Settings Modal
-// Version: 1.5.0
+// Version: 1.6.0
 // ============================================
 
 import { conversationStorage, agentStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
@@ -23,6 +23,7 @@ const DEPTH_LEVELS: Array<{ id: ConversationDepth; name: string; icon: string; d
 
 
 export class ConversationSettingsModal extends HTMLElement {
+  private readonly uid = `conversation-settings-${Math.random().toString(36).slice(2, 10)}`;
   private conversation: Conversation | null = null;
   private agents: Agent[] = [];
   private providers: LLMProvider[] = [];
@@ -30,6 +31,10 @@ export class ConversationSettingsModal extends HTMLElement {
   // Enabled languages from settings
   private enabledLanguages: Language[] = getEnabledLanguages(['']);
   private settingsUnsubscribe: (() => void) | null = null;
+
+  private elId(suffix: string): string {
+    return `${this.uid}-${suffix}`;
+  }
 
   static get observedAttributes() {
     return ['open', 'conversation-id'];
@@ -765,7 +770,7 @@ export class ConversationSettingsModal extends HTMLElement {
           </div>
 
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" id="cancel-btn">Close</button>
+            <button type="button" class="btn btn-secondary" id="${this.elId('cancel-btn')}">Close</button>
             <button type="button" class="btn btn-primary" id="save-btn" ${!editable ? 'disabled' : ''}>
               Save Changes
             </button>
@@ -1016,7 +1021,7 @@ export class ConversationSettingsModal extends HTMLElement {
   private setupEventHandlers() {
     // Close button
     this.shadowRoot?.getElementById('close-btn')?.addEventListener('click', () => this.close());
-    this.shadowRoot?.getElementById('cancel-btn')?.addEventListener('click', () => this.close());
+    this.shadowRoot?.getElementById(this.elId('cancel-btn'))?.addEventListener('click', () => this.close());
 
     // Click outside to close
     this.shadowRoot?.querySelector('.modal-overlay')?.addEventListener('click', (e) => {

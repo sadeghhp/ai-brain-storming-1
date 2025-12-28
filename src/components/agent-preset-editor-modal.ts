@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Agent Preset Editor Modal
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { presetStorage } from '../storage/storage-manager';
@@ -26,8 +26,13 @@ export interface PresetEditorResult {
 }
 
 export class AgentPresetEditorModal extends HTMLElement {
+  private readonly uid = `preset-editor-${Math.random().toString(36).slice(2, 10)}`;
   private config: PresetEditorConfig = { mode: 'create' };
   private formData: Partial<PresetEditorResult> = {};
+
+  private elId(suffix: string): string {
+    return `${this.uid}-${suffix}`;
+  }
 
   static get observedAttributes() {
     return ['open'];
@@ -622,7 +627,7 @@ export class AgentPresetEditorModal extends HTMLElement {
           </div>
 
           <div class="modal-footer">
-            <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
+            <button class="btn btn-secondary" id="${this.elId('cancel-btn')}">Cancel</button>
             <button class="btn btn-primary" id="save-btn">
               ${this.config.mode === 'edit' ? 'Save Changes' : 'Create Preset'}
             </button>
@@ -645,7 +650,7 @@ export class AgentPresetEditorModal extends HTMLElement {
     this.shadowRoot?.getElementById('close-btn')?.addEventListener('click', () => this.close());
     
     // Cancel button
-    this.shadowRoot?.getElementById('cancel-btn')?.addEventListener('click', () => this.close());
+    this.shadowRoot?.getElementById(this.elId('cancel-btn'))?.addEventListener('click', () => this.close());
     
     // Save button
     this.shadowRoot?.getElementById('save-btn')?.addEventListener('click', () => this.handleSave());

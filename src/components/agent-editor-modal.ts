@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Agent Editor Modal
-// Version: 1.4.0
+// Version: 1.5.0
 // ============================================
 
 import { presetStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
@@ -33,6 +33,7 @@ export interface AgentEditorResult {
 }
 
 export class AgentEditorModal extends HTMLElement {
+  private readonly uid = `agent-editor-${Math.random().toString(36).slice(2, 10)}`;
   private config: AgentEditorConfig = { mode: 'create' };
   private presets: AgentPreset[] = [];
   private providers: LLMProvider[] = [];
@@ -41,6 +42,10 @@ export class AgentEditorModal extends HTMLElement {
   private expandedCategories: Set<string> = new Set();
   private hiddenCategories: Set<string> = new Set();
   private hiddenPresets: Set<string> = new Set();
+
+  private elId(suffix: string): string {
+    return `${this.uid}-${suffix}`;
+  }
 
   static get observedAttributes() {
     return ['open'];
@@ -771,7 +776,7 @@ export class AgentEditorModal extends HTMLElement {
                 <div class="llm-row">
                   <div class="form-group">
                     <label class="form-label">Provider *</label>
-                    <select class="form-select" id="provider">
+                    <select class="form-select" id="${this.elId('provider')}">
                       ${this.providers.map(p => `
                         <option value="${p.id}" 
                                 ${!p.isActive ? 'disabled' : ''} 
@@ -783,7 +788,7 @@ export class AgentEditorModal extends HTMLElement {
                   </div>
                   <div class="form-group">
                     <label class="form-label">Model *</label>
-                    <select class="form-select" id="model">
+                    <select class="form-select" id="${this.elId('model')}">
                       ${activeProvider?.models.map(m => `
                         <option value="${m.id}" ${this.formData.modelId === m.id ? 'selected' : ''}>
                           ${m.name}
@@ -870,7 +875,7 @@ export class AgentEditorModal extends HTMLElement {
             </div>
 
             <div class="modal-footer">
-              <button type="button" class="btn btn-secondary" id="cancel-btn">Cancel</button>
+              <button type="button" class="btn btn-secondary" id="${this.elId('cancel-btn')}">Cancel</button>
               <button type="submit" class="btn btn-primary">
                 ${isEditMode ? 'Save Changes' : 'Add Agent'}
               </button>
@@ -886,7 +891,7 @@ export class AgentEditorModal extends HTMLElement {
   private setupEventHandlers() {
     // Close button
     this.shadowRoot?.getElementById('close-btn')?.addEventListener('click', () => this.close());
-    this.shadowRoot?.getElementById('cancel-btn')?.addEventListener('click', () => this.close());
+    this.shadowRoot?.getElementById(this.elId('cancel-btn'))?.addEventListener('click', () => this.close());
 
     // Click outside to close
     this.shadowRoot?.querySelector('.modal-overlay')?.addEventListener('click', (e) => {
@@ -940,7 +945,7 @@ export class AgentEditorModal extends HTMLElement {
     });
 
     // Provider change - update model list
-    const providerSelect = this.shadowRoot?.getElementById('provider') as HTMLSelectElement;
+    const providerSelect = this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement;
     providerSelect?.addEventListener('change', () => {
       this.formData.llmProviderId = providerSelect.value;
       this.updateModelSelect();
@@ -981,7 +986,7 @@ export class AgentEditorModal extends HTMLElement {
   }
 
   private updateModelSelect() {
-    const modelSelect = this.shadowRoot?.getElementById('model') as HTMLSelectElement;
+    const modelSelect = this.shadowRoot?.getElementById(this.elId('model')) as HTMLSelectElement;
     if (!modelSelect) return;
 
     const provider = this.providers.find(p => p.id === this.formData.llmProviderId);
@@ -1001,8 +1006,8 @@ export class AgentEditorModal extends HTMLElement {
     const name = (this.shadowRoot?.getElementById('name') as HTMLInputElement)?.value;
     const role = (this.shadowRoot?.getElementById('role') as HTMLInputElement)?.value;
     const expertise = (this.shadowRoot?.getElementById('expertise') as HTMLInputElement)?.value;
-    const providerId = (this.shadowRoot?.getElementById('provider') as HTMLSelectElement)?.value;
-    const modelId = (this.shadowRoot?.getElementById('model') as HTMLSelectElement)?.value;
+    const providerId = (this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement)?.value;
+    const modelId = (this.shadowRoot?.getElementById(this.elId('model')) as HTMLSelectElement)?.value;
     const thinkingDepth = parseInt((this.shadowRoot?.getElementById('thinkingDepth') as HTMLInputElement)?.value || '3');
     const creativityLevel = parseInt((this.shadowRoot?.getElementById('creativityLevel') as HTMLInputElement)?.value || '3');
     const notebookUsage = parseInt((this.shadowRoot?.getElementById('notebookUsage') as HTMLInputElement)?.value || '50');

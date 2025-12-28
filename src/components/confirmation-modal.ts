@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Confirmation Modal
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
@@ -15,6 +15,7 @@ export interface ConfirmationConfig {
 }
 
 export class ConfirmationModal extends HTMLElement {
+  private readonly uid = `confirm-${Math.random().toString(36).slice(2, 10)}`;
   private config: ConfirmationConfig = {
     title: 'Confirm Action',
     message: 'Are you sure you want to proceed?',
@@ -25,6 +26,10 @@ export class ConfirmationModal extends HTMLElement {
 
   static get observedAttributes() {
     return ['open'];
+  }
+
+  private elId(suffix: string): string {
+    return `${this.uid}-${suffix}`;
   }
 
   constructor() {
@@ -43,7 +48,7 @@ export class ConfirmationModal extends HTMLElement {
       // Focus the cancel button when opening for better accessibility
       if (newValue === 'true') {
         requestAnimationFrame(() => {
-          const cancelBtn = this.shadowRoot?.getElementById('cancel-btn') as HTMLButtonElement;
+          const cancelBtn = this.shadowRoot?.getElementById(this.elId('cancel-btn')) as HTMLButtonElement;
           cancelBtn?.focus();
         });
       }
@@ -362,7 +367,7 @@ export class ConfirmationModal extends HTMLElement {
             ` : ''}
           </div>
           <div class="modal-footer">
-            <button class="btn btn-secondary" id="cancel-btn">${cancelText}</button>
+            <button class="btn btn-secondary" id="${this.elId('cancel-btn')}">${cancelText}</button>
             <button class="btn btn-${variant}" id="confirm-btn">${confirmText}</button>
           </div>
         </div>
@@ -381,7 +386,7 @@ export class ConfirmationModal extends HTMLElement {
     });
 
     // Cancel button
-    this.shadowRoot?.getElementById('cancel-btn')?.addEventListener('click', () => {
+    this.shadowRoot?.getElementById(this.elId('cancel-btn'))?.addEventListener('click', () => {
       this.close(false);
     });
 

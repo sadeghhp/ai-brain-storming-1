@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.8.0
+// Version: 2.10.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -43,6 +43,7 @@ interface CustomAgent {
 }
 
 export class NewConversationModal extends HTMLElement {
+  private readonly uid = `new-conversation-${Math.random().toString(36).slice(2, 10)}`;
   private presets: AgentPreset[] = [];
   private providers: LLMProvider[] = [];
   private selectedPresets: Set<string> = new Set();
@@ -73,6 +74,11 @@ export class NewConversationModal extends HTMLElement {
   // Hidden categories/presets from settings
   private hiddenCategories: Set<string> = new Set();
   private hiddenPresets: Set<string> = new Set();
+  private settingsUpdateToken = 0;
+
+  private elId(suffix: string): string {
+    return `${this.uid}-${suffix}`;
+  }
 
   static get observedAttributes() {
     return ['open'];
@@ -94,15 +100,22 @@ export class NewConversationModal extends HTMLElement {
     }
 
     this.settingsUnsubscribe = eventBus.on('settings:updated', async (settings: AppSettings) => {
-      this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
-      this.hiddenCategories = new Set(settings.hiddenCategories || []);
-      this.hiddenPresets = new Set(settings.hiddenPresets || []);
+      const token = ++this.settingsUpdateToken;
+      const enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
+      const hiddenCategories = new Set(settings.hiddenCategories || []);
+      const hiddenPresets = new Set(settings.hiddenPresets || []);
       
       // Re-load presets to apply new visibility filters
       const allPresets = await presetStorage.getAll();
+      if (token !== this.settingsUpdateToken) return;
+
+      this.enabledLanguages = enabledLanguages;
+      this.hiddenCategories = hiddenCategories;
+      this.hiddenPresets = hiddenPresets;
+
       this.presets = allPresets.filter(preset => {
-        if (this.hiddenCategories.has(preset.category)) return false;
-        if (this.hiddenPresets.has(preset.id)) return false;
+        if (hiddenCategories.has(preset.category)) return false;
+        if (hiddenPresets.has(preset.id)) return false;
         return true;
       });
 
@@ -1350,14 +1363,14 @@ export class NewConversationModal extends HTMLElement {
                 <div class="form-group">
                   <label class="form-label">LLM Provider & Model (for all agents)</label>
                   <div class="inline-select">
-                    <select class="form-select" id="provider">
+                    <select class="form-select" id="${this.elId('provider')}">
                       ${this.providers.map(p => `
                         <option value="${p.id}" ${!p.isActive ? 'disabled' : ''} ${p.id === providerId ? 'selected' : ''}>
                           ${p.name} ${!p.isActive ? '(not configured)' : ''}
                         </option>
                       `).join('')}
                     </select>
-                    <select class="form-select" id="model" ${!hasModels ? 'disabled' : ''}>
+                    <select class="form-select" id="${this.elId('model')}" ${!hasModels ? 'disabled' : ''}>
                       ${availableModels.length > 0 ? availableModels.map(m => `
                         <option value="${m.id}" ${m.id === modelId ? 'selected' : ''}>
                           ${m.name}
@@ -1480,7 +1493,7 @@ export class NewConversationModal extends HTMLElement {
             </div>
 
             <div class="modal-footer">
-              <button type="button" class="btn btn-secondary" id="cancel-btn">Cancel</button>
+              <button type="button" class="btn btn-secondary" id="${this.elId('cancel-btn')}">Cancel</button>
               <button type="submit" class="btn btn-primary" ${!canCreate ? 'disabled' : ''}>
                 Create Conversation
               </button>
@@ -1575,7 +1588,7 @@ export class NewConversationModal extends HTMLElement {
   private setupEventHandlers() {
     // Close button
     this.shadowRoot?.getElementById('close-btn')?.addEventListener('click', () => this.close());
-    this.shadowRoot?.getElementById('cancel-btn')?.addEventListener('click', () => this.close());
+    this.shadowRoot?.getElementById(this.elId('cancel-btn'))?.addEventListener('click', () => this.close());
 
     // Click outside to close
     this.shadowRoot?.querySelector('.modal-overlay')?.addEventListener('click', (e) => {
@@ -1670,8 +1683,8 @@ export class NewConversationModal extends HTMLElement {
     });
 
     // Simple mode: Provider/model selection
-    const providerSelect = this.shadowRoot?.getElementById('provider') as HTMLSelectElement | null;
-    const modelSelect = this.shadowRoot?.getElementById('model') as HTMLSelectElement | null;
+    const providerSelect = this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement | null;
+    const modelSelect = this.shadowRoot?.getElementById(this.elId('model')) as HTMLSelectElement | null;
 
     providerSelect?.addEventListener('change', async () => {
       this.captureDraftFromDom();
@@ -1702,7 +1715,7 @@ export class NewConversationModal extends HTMLElement {
 
     // Refresh Models button
     this.shadowRoot?.getElementById('refresh-models')?.addEventListener('click', async () => {
-      const providerId = this.selectedProviderId || (this.shadowRoot?.getElementById('provider') as HTMLSelectElement)?.value;
+      const providerId = this.selectedProviderId || (this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement)?.value;
       if (providerId) {
         this.renderPreservingDraft(); // Show loading state without wiping draft fields
         await this.fetchAndPersistModels(providerId);
@@ -2101,8 +2114,12 @@ export class NewConversationModal extends HTMLElement {
       }));
     } else {
       // Simple mode: use presets with shared LLM
-      const providerId = this.selectedProviderId || (this.shadowRoot?.getElementById('provider') as HTMLSelectElement)?.value;
-      const modelId = this.selectedModelId || (this.shadowRoot?.getElementById('model') as HTMLSelectElement)?.value;
+      const providerId =
+        this.selectedProviderId ||
+        (this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement)?.value;
+      const modelId =
+        this.selectedModelId ||
+        (this.shadowRoot?.getElementById(this.elId('model')) as HTMLSelectElement)?.value;
 
       if (!providerId || !modelId || this.selectedPresets.size < 2) {
         return;
