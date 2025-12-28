@@ -671,7 +671,7 @@ export class AgentPresetEditorModal extends HTMLElement {
 
     // Keyboard shortcuts
     this.shadowRoot?.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
+      if ((e as KeyboardEvent).key === 'Escape') {
         this.close();
       }
     });
