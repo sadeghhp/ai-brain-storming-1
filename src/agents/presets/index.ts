@@ -1,20 +1,23 @@
 // ============================================
 // AI Brainstorm - Agent Presets Index
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { softwarePresets } from './software-presets';
+import { financePresets } from './finance-presets';
 import { presetStorage } from '../../storage/storage-manager';
 import type { AgentPreset } from '../../types';
 
 // All built-in presets
 export const builtInPresets: AgentPreset[] = [
   ...softwarePresets,
+  ...financePresets,
 ];
 
 // Preset categories
 export const presetCategories = [
   { id: 'software', name: 'Software Development', icon: '💻' },
+  { id: 'finance', name: 'Finance & Trading', icon: '📈' },
   { id: 'design', name: 'Design', icon: '🎨' },
   { id: 'data', name: 'Data & ML', icon: '📊' },
   { id: 'business', name: 'Business', icon: '💼' },
@@ -96,6 +99,7 @@ export function getRecommendedPresets(topic: string): AgentPreset[] {
     // Check category keywords
     const categoryKeywords: Record<string, string[]> = {
       software: ['app', 'web', 'code', 'software', 'develop', 'programming', 'api'],
+      finance: ['finance', 'trading', 'investment', 'portfolio', 'risk', 'market', 'fund', 'stock', 'asset'],
       design: ['design', 'ui', 'ux', 'user', 'interface', 'experience'],
       data: ['data', 'ml', 'machine learning', 'analytics', 'ai', 'model'],
       business: ['business', 'product', 'requirements', 'stakeholder'],
@@ -148,5 +152,14 @@ export function getFullStackTeamPresets(): AgentPreset[] {
   );
 }
 
-export { softwarePresets };
+/**
+ * Create a finance/investment team
+ */
+export function getFinanceTeamPresets(): AgentPreset[] {
+  return builtInPresets.filter(p =>
+    ['preset-portfolio-manager', 'preset-financial-analyst', 'preset-risk-manager', 'preset-trader', 'preset-compliance-officer'].includes(p.id)
+  );
+}
+
+export { softwarePresets, financePresets };
 

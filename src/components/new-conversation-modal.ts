@@ -1,10 +1,11 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.2.0
+// Version: 2.3.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
 import { presetStorage, providerStorage } from '../storage/storage-manager';
+import { presetCategories } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
@@ -39,6 +40,7 @@ export class NewConversationModal extends HTMLElement {
   private editingAgentIndex: number = -1;
   private isFetchingModels: boolean = false;
   private modelFetchError: string | null = null;
+  private expandedCategories: Set<string> = new Set();
 
   static get observedAttributes() {
     return ['open'];
@@ -112,7 +114,8 @@ export class NewConversationModal extends HTMLElement {
         const mergedModels = [...customModels, ...uniqueFetched];
         
         // Persist to storage
-        await providerStorage.setModels(providerId, mergedModels);
+        // (Use `update()` instead of `setModels()` to avoid type/interface mismatches.)
+        await providerStorage.update(providerId, { models: mergedModels });
         
         // Reload providers to get updated models
         this.providers = await providerStorage.getAll();
@@ -222,6 +225,14 @@ export class NewConversationModal extends HTMLElement {
             0 0 0 1px rgba(255, 255, 255, 0.05),
             0 20px 50px -10px rgba(0, 0, 0, 0.5),
             0 0 80px -20px var(--color-primary-dim);
+        }
+
+        /* Keep footer visible: make the form a flex container so the body can scroll. */
+        .modal-form {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-height: 0;
         }
 
         @keyframes scaleIn {
@@ -389,13 +400,9 @@ export class NewConversationModal extends HTMLElement {
         }
 
         .preset-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-          gap: var(--space-2);
-          max-height: 180px;
+          max-height: 240px;
           overflow-y: auto;
           overflow-x: hidden;
-          padding: var(--space-3);
           background: var(--color-bg-tertiary);
           border: 1px solid var(--color-border);
           border-radius: var(--radius-md);
@@ -429,6 +436,75 @@ export class NewConversationModal extends HTMLElement {
           border-color: var(--color-primary);
           color: var(--color-primary);
           box-shadow: 0 0 0 1px var(--color-primary);
+        }
+
+        .preset-category {
+          border-bottom: 1px solid var(--color-border);
+        }
+
+        .preset-category:last-child {
+          border-bottom: none;
+        }
+
+        .preset-category-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-3);
+          cursor: pointer;
+          transition: background var(--transition-fast);
+          user-select: none;
+        }
+
+        .preset-category-header:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .preset-category-header.expanded {
+          background: var(--color-surface);
+        }
+
+        .preset-category-title {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-secondary);
+        }
+
+        .preset-category-icon {
+          font-size: var(--text-base);
+        }
+
+        .preset-category-count {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          background: var(--color-surface);
+          padding: 2px 6px;
+          border-radius: var(--radius-sm);
+          margin-left: var(--space-2);
+        }
+
+        .preset-category-chevron {
+          transition: transform 0.2s ease;
+          color: var(--color-text-tertiary);
+        }
+
+        .preset-category-header.expanded .preset-category-chevron {
+          transform: rotate(180deg);
+        }
+
+        .preset-category-content {
+          display: none;
+          padding: var(--space-3);
+          padding-top: 0;
+          gap: var(--space-2);
+          flex-wrap: wrap;
+        }
+
+        .preset-category-content.expanded {
+          display: flex;
         }
 
         .provider-warning {
@@ -510,11 +586,13 @@ export class NewConversationModal extends HTMLElement {
         .modal-footer {
           display: flex;
           justify-content: flex-end;
+          align-items: center;
           gap: var(--space-3);
           padding: var(--space-4) var(--space-6);
           border-top: 1px solid var(--color-border);
           background: var(--color-bg-secondary);
           flex-shrink: 0;
+          flex-wrap: wrap;
         }
 
         .btn {
@@ -524,6 +602,11 @@ export class NewConversationModal extends HTMLElement {
           cursor: pointer;
           transition: all var(--transition-fast);
           font-size: var(--text-sm);
+          min-height: 40px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          box-sizing: border-box;
         }
 
         .btn-secondary {
@@ -553,6 +636,33 @@ export class NewConversationModal extends HTMLElement {
           opacity: 0.4;
           cursor: not-allowed;
           box-shadow: none;
+        }
+
+        @media (max-width: 480px) {
+          .modal-overlay {
+            padding: var(--space-2);
+          }
+
+          .modal-header,
+          .modal-footer {
+            padding-left: var(--space-4);
+            padding-right: var(--space-4);
+          }
+
+          .modal-body {
+            padding: var(--space-4);
+          }
+
+          .modal-footer {
+            flex-direction: column-reverse;
+            align-items: stretch;
+          }
+
+          .modal-footer .btn {
+            width: 100%;
+            /* Ensure full-width behavior across browsers/layout contexts */
+            display: flex;
+          }
         }
 
         .inline-select {
@@ -756,7 +866,7 @@ export class NewConversationModal extends HTMLElement {
             </button>
           </div>
 
-          <form id="new-conv-form">
+          <form id="new-conv-form" class="modal-form">
             <div class="modal-body">
               ${this.providers.filter(p => p.isActive).length === 0 ? `
                 <div class="provider-warning">
@@ -863,11 +973,7 @@ export class NewConversationModal extends HTMLElement {
                   </div>
                   <div class="preset-grid-wrapper">
                     <div class="preset-grid">
-                      ${this.presets.map(p => `
-                        <div class="preset-chip ${this.selectedPresets.has(p.id) ? 'selected' : ''}" data-preset-id="${p.id}">
-                          ${p.name}
-                        </div>
-                      `).join('')}
+                      ${this.renderPresetCategoriesForSelection()}
                     </div>
                   </div>
                 </div>
@@ -961,6 +1067,73 @@ export class NewConversationModal extends HTMLElement {
     this.setupEventHandlers();
   }
 
+  private getPresetsByCategory(): Map<string, AgentPreset[]> {
+    const grouped = new Map<string, AgentPreset[]>();
+    
+    // Initialize all categories
+    for (const category of presetCategories) {
+      if (category.id !== 'custom') {
+        grouped.set(category.id, []);
+      }
+    }
+    
+    // Group presets by category
+    for (const preset of this.presets) {
+      const categoryPresets = grouped.get(preset.category);
+      if (categoryPresets) {
+        categoryPresets.push(preset);
+      }
+    }
+    
+    return grouped;
+  }
+
+  private renderPresetCategoriesForSelection(): string {
+    const grouped = this.getPresetsByCategory();
+    
+    // Auto-expand first category with presets if none expanded
+    if (this.expandedCategories.size === 0) {
+      for (const [categoryId, presets] of grouped) {
+        if (presets.length > 0) {
+          this.expandedCategories.add(categoryId);
+          break;
+        }
+      }
+    }
+    
+    return presetCategories
+      .filter(cat => cat.id !== 'custom')
+      .map(category => {
+        const presets = grouped.get(category.id) || [];
+        if (presets.length === 0) return ''; // Hide empty categories
+        
+        const isExpanded = this.expandedCategories.has(category.id);
+        const selectedCount = presets.filter(p => this.selectedPresets.has(p.id)).length;
+        
+        return `
+          <div class="preset-category" data-category="${category.id}">
+            <div class="preset-category-header ${isExpanded ? 'expanded' : ''}" data-category="${category.id}">
+              <div class="preset-category-title">
+                <span class="preset-category-icon">${category.icon}</span>
+                <span>${category.name}</span>
+                <span class="preset-category-count">${selectedCount > 0 ? `${selectedCount}/` : ''}${presets.length}</span>
+              </div>
+              <svg class="preset-category-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </div>
+            <div class="preset-category-content ${isExpanded ? 'expanded' : ''}">
+              ${presets.map(p => `
+                <div class="preset-chip ${this.selectedPresets.has(p.id) ? 'selected' : ''}" data-preset-id="${p.id}">
+                  ${p.name}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('');
+  }
+
   private getAgentColor(index: number): string {
     const colors = [
       '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
@@ -1039,9 +1212,32 @@ export class NewConversationModal extends HTMLElement {
       }
     });
 
+    // Category accordion toggle
+    this.shadowRoot?.querySelectorAll('.preset-category-header').forEach(header => {
+      header.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const categoryId = header.getAttribute('data-category');
+        if (!categoryId) return;
+        
+        const content = header.nextElementSibling as HTMLElement;
+        const isExpanded = header.classList.contains('expanded');
+        
+        if (isExpanded) {
+          this.expandedCategories.delete(categoryId);
+          header.classList.remove('expanded');
+          content?.classList.remove('expanded');
+        } else {
+          this.expandedCategories.add(categoryId);
+          header.classList.add('expanded');
+          content?.classList.add('expanded');
+        }
+      });
+    });
+
     // Simple mode: Preset selection
     this.shadowRoot?.querySelectorAll('.preset-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation();
         const presetId = chip.getAttribute('data-preset-id');
         if (!presetId) return;
 
@@ -1277,6 +1473,20 @@ export class NewConversationModal extends HTMLElement {
     if (countBadge) {
       countBadge.textContent = `${this.selectedPresets.size} selected`;
     }
+
+    // Update category counts
+    const grouped = this.getPresetsByCategory();
+    this.shadowRoot?.querySelectorAll('.preset-category').forEach(categoryEl => {
+      const categoryId = categoryEl.getAttribute('data-category');
+      if (!categoryId) return;
+      
+      const presets = grouped.get(categoryId) || [];
+      const selectedCount = presets.filter(p => this.selectedPresets.has(p.id)).length;
+      const countEl = categoryEl.querySelector('.preset-category-count') as HTMLElement;
+      if (countEl) {
+        countEl.textContent = selectedCount > 0 ? `${selectedCount}/${presets.length}` : `${presets.length}`;
+      }
+    });
 
     const submitBtn = this.shadowRoot?.querySelector('button[type="submit"]') as HTMLButtonElement;
     if (submitBtn) {

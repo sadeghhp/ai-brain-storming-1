@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Agent Roster Component
-// Version: 2.1.0
+// Version: 2.2.0
 // ============================================
 
 import { agentStorage, conversationStorage, providerStorage } from '../storage/storage-manager';
@@ -72,6 +72,20 @@ export class AgentRoster extends HTMLElement {
       this.updateAgentStatus(agentId);
     });
 
+    // Update to speaking when streaming starts
+    eventBus.on('stream:chunk', ({ agentId }) => {
+      if (this.agentStatuses.get(agentId) !== 'speaking') {
+        this.agentStatuses.set(agentId, 'speaking');
+        this.updateAgentStatus(agentId);
+      }
+    });
+
+    // Reset to idle when streaming completes
+    eventBus.on('stream:complete', ({ agentId }) => {
+      this.agentStatuses.set(agentId, 'idle');
+      this.updateAgentStatus(agentId);
+    });
+
     // Refresh when conversation status changes
     eventBus.on('conversation:started', () => this.loadAgents());
     eventBus.on('conversation:paused', () => this.loadAgents());
@@ -127,15 +141,27 @@ export class AgentRoster extends HTMLElement {
         .agent-card.thinking {
           border-color: var(--color-primary);
           box-shadow: 0 0 0 2px var(--color-primary-dim);
+          animation: cardPulse 2s ease-in-out infinite;
         }
 
         .agent-card.speaking {
           border-color: var(--color-success);
           box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+          animation: cardGlow 1s ease-in-out infinite;
         }
 
         .agent-card.secretary {
           border-color: var(--color-secondary);
+        }
+
+        @keyframes cardPulse {
+          0%, 100% { box-shadow: 0 0 0 2px var(--color-primary-dim); }
+          50% { box-shadow: 0 0 0 4px var(--color-primary-dim), 0 0 12px var(--color-primary-dim); }
+        }
+
+        @keyframes cardGlow {
+          0%, 100% { box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2); }
+          50% { box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.3), 0 0 8px rgba(34, 197, 94, 0.2); }
         }
 
         .agent-card .edit-indicator {
@@ -182,21 +208,59 @@ export class AgentRoster extends HTMLElement {
           border-radius: 50%;
           border: 2px solid var(--color-bg-secondary);
           background: var(--color-text-tertiary);
+          transition: all var(--transition-fast);
         }
 
         .status-dot.thinking {
           background: var(--color-primary);
-          animation: pulse 1.5s ease-in-out infinite;
+          animation: statusPulse 1.5s ease-in-out infinite;
+          box-shadow: 0 0 6px var(--color-primary);
         }
 
         .status-dot.speaking {
           background: var(--color-success);
-          animation: pulse 0.8s ease-in-out infinite;
+          animation: statusPulse 0.8s ease-in-out infinite;
+          box-shadow: 0 0 6px var(--color-success);
         }
 
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
+        @keyframes statusPulse {
+          0%, 100% { 
+            opacity: 1; 
+            transform: scale(1);
+          }
+          50% { 
+            opacity: 0.7; 
+            transform: scale(1.2);
+          }
+        }
+
+        .status-label {
+          position: absolute;
+          bottom: -18px;
+          left: 50%;
+          transform: translateX(-50%);
+          font-size: 9px;
+          font-weight: var(--font-medium);
+          white-space: nowrap;
+          padding: 1px 4px;
+          border-radius: var(--radius-sm);
+          opacity: 0;
+          transition: opacity var(--transition-fast);
+        }
+
+        .agent-card.thinking .status-label,
+        .agent-card.speaking .status-label {
+          opacity: 1;
+        }
+
+        .status-label.thinking {
+          color: var(--color-primary);
+          background: var(--color-primary-dim);
+        }
+
+        .status-label.speaking {
+          color: var(--color-success);
+          background: rgba(34, 197, 94, 0.15);
         }
 
         .agent-info {
@@ -315,6 +379,7 @@ export class AgentRoster extends HTMLElement {
       const tooltipText = editable 
         ? `Click to edit • ${model?.name || agent.modelId}` 
         : `${model?.name || agent.modelId} • Pause to edit`;
+      const statusLabel = status === 'thinking' ? 'thinking...' : status === 'speaking' ? 'writing...' : '';
 
       return `
         <div class="agent-card ${status} ${agent.isSecretary ? 'secretary' : ''} ${editable ? 'editable' : ''}" 
@@ -331,7 +396,8 @@ export class AgentRoster extends HTMLElement {
           ` : ''}
           <div class="avatar" style="background: ${agent.color}20; color: ${agent.color};">
             ${initials}
-            <div class="status-dot ${status}"></div>
+            <div class="status-dot ${status}" style="${status !== 'idle' ? `background: ${agent.color}; box-shadow: 0 0 6px ${agent.color};` : ''}"></div>
+            <span class="status-label ${status}" style="${status === 'thinking' ? `color: ${agent.color}; background: ${agent.color}20;` : status === 'speaking' ? `color: ${agent.color}; background: ${agent.color}20;` : ''}">${statusLabel}</span>
           </div>
           <div class="agent-info">
             <span class="agent-name">${agent.name}</span>
@@ -372,14 +438,40 @@ export class AgentRoster extends HTMLElement {
     const card = this.shadowRoot?.querySelector(`.agent-card[data-id="${agentId}"]`);
     if (!card) return;
 
+    const agent = this.agents.find(a => a.id === agentId);
     const status = this.agentStatuses.get(agentId) || 'idle';
+    const color = agent?.color || 'var(--color-primary)';
+    
     card.classList.remove('idle', 'thinking', 'speaking');
     card.classList.add(status);
 
-    const statusDot = card.querySelector('.status-dot');
+    const statusDot = card.querySelector('.status-dot') as HTMLElement;
     if (statusDot) {
       statusDot.classList.remove('idle', 'thinking', 'speaking');
       statusDot.classList.add(status);
+      // Apply agent color to status dot
+      if (status !== 'idle') {
+        statusDot.style.background = color;
+        statusDot.style.boxShadow = `0 0 6px ${color}`;
+      } else {
+        statusDot.style.background = '';
+        statusDot.style.boxShadow = '';
+      }
+    }
+
+    // Update status label
+    const statusLabel = card.querySelector('.status-label') as HTMLElement;
+    if (statusLabel) {
+      statusLabel.classList.remove('idle', 'thinking', 'speaking');
+      statusLabel.classList.add(status);
+      statusLabel.textContent = status === 'thinking' ? 'thinking...' : status === 'speaking' ? 'writing...' : '';
+      if (status !== 'idle') {
+        statusLabel.style.color = color;
+        statusLabel.style.background = `${color}20`;
+      } else {
+        statusLabel.style.color = '';
+        statusLabel.style.background = '';
+      }
     }
   }
 }

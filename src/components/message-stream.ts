@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Message Stream Component
-// Version: 1.1.0
+// Version: 1.2.1
 // ============================================
 
 import { messageStorage, agentStorage } from '../storage/storage-manager';
@@ -16,6 +16,8 @@ export class MessageStream extends HTMLElement {
   private autoScroll = true;
   private streamingAgentId: string | null = null;
   private streamingContent: string = '';
+  private collapsedMessages: Set<string> = new Set();
+  private isClickHandlerAttached = false;
 
   static get observedAttributes() {
     return ['conversation-id'];
@@ -73,9 +75,15 @@ export class MessageStream extends HTMLElement {
       this.updateStreamingBubble(this.streamingContent);
     });
 
-    eventBus.on('stream:complete', () => {
-      this.streamingAgentId = null;
-      this.streamingContent = '';
+    eventBus.on('stream:complete', ({ agentId }) => {
+      // Remove any lingering streaming bubble (e.g. if a turn fails and no final message is created)
+      const container = this.shadowRoot?.getElementById('messages');
+      container?.querySelector(`.streaming-message[data-agent="${agentId}"]`)?.remove();
+
+      if (this.streamingAgentId === agentId) {
+        this.streamingAgentId = null;
+        this.streamingContent = '';
+      }
     });
 
     // Agent status
@@ -242,18 +250,25 @@ export class MessageStream extends HTMLElement {
           border-left: 3px solid var(--color-primary);
         }
 
+        /* Enhanced thinking indicator */
+        .thinking-message .message-body {
+          display: flex;
+          align-items: center;
+          gap: var(--space-3);
+          padding: var(--space-3) var(--space-4);
+        }
+
         .thinking-indicator {
           display: flex;
-          gap: 4px;
-          padding: var(--space-2);
+          gap: 5px;
+          align-items: center;
         }
 
         .thinking-indicator span {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          background: var(--color-primary);
-          animation: pulse 1.4s ease-in-out infinite;
+          animation: thinkingPulse 1.4s ease-in-out infinite;
         }
 
         .thinking-indicator span:nth-child(2) {
@@ -264,9 +279,163 @@ export class MessageStream extends HTMLElement {
           animation-delay: 0.4s;
         }
 
-        @keyframes pulse {
+        @keyframes thinkingPulse {
           0%, 100% { opacity: 0.3; transform: scale(0.8); }
           50% { opacity: 1; transform: scale(1); }
+        }
+
+        .thinking-label {
+          font-size: var(--text-sm);
+          color: var(--color-text-secondary);
+          font-style: italic;
+        }
+
+        /* Writing/streaming indicator */
+        .streaming-message .message-header .writing-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--space-1);
+          padding: 2px 8px;
+          border-radius: var(--radius-full);
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          animation: writingGlow 1.5s ease-in-out infinite;
+        }
+
+        @keyframes writingGlow {
+          0%, 100% { opacity: 0.7; }
+          50% { opacity: 1; }
+        }
+
+        .streaming-message .writing-dots {
+          display: inline-flex;
+          gap: 2px;
+          margin-left: var(--space-1);
+        }
+
+        .streaming-message .writing-dots span {
+          width: 4px;
+          height: 4px;
+          border-radius: 50%;
+          animation: writingDots 1s ease-in-out infinite;
+        }
+
+        .streaming-message .writing-dots span:nth-child(2) {
+          animation-delay: 0.15s;
+        }
+
+        .streaming-message .writing-dots span:nth-child(3) {
+          animation-delay: 0.3s;
+        }
+
+        @keyframes writingDots {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
+        }
+
+        /* Collapse/Expand styles */
+        .message-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: var(--space-2);
+          padding: var(--space-2) var(--space-6);
+          border-bottom: 1px solid var(--color-border);
+          background: var(--color-bg-secondary);
+        }
+
+        .toolbar-btn {
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+          padding: var(--space-1) var(--space-2);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          color: var(--color-text-secondary);
+          font-size: var(--text-xs);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .toolbar-btn:hover {
+          background: var(--color-surface-hover);
+          border-color: var(--color-border-strong);
+          color: var(--color-text-primary);
+        }
+
+        .toolbar-btn svg {
+          width: 14px;
+          height: 14px;
+        }
+
+        .collapse-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 24px;
+          height: 24px;
+          background: transparent;
+          border: none;
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          flex-shrink: 0;
+          margin-right: var(--space-2);
+        }
+
+        .collapse-toggle:hover {
+          background: var(--color-surface);
+          color: var(--color-text-primary);
+        }
+
+        .collapse-toggle svg {
+          width: 16px;
+          height: 16px;
+          transition: transform var(--transition-fast);
+        }
+
+        .collapse-toggle.collapsed svg {
+          transform: rotate(-90deg);
+        }
+
+        .message-body-wrapper {
+          overflow: hidden;
+          max-height: 2000px;
+          opacity: 1;
+          transition: max-height 0.3s ease, opacity 0.2s ease;
+        }
+
+        .message-body-wrapper.collapsed {
+          max-height: 0 !important;
+          opacity: 0;
+        }
+
+        .collapsed-preview {
+          display: none;
+          font-size: var(--text-sm);
+          color: var(--color-text-tertiary);
+          font-style: italic;
+          padding: var(--space-2) 0;
+          cursor: pointer;
+        }
+
+        .collapsed-preview:hover {
+          color: var(--color-text-secondary);
+        }
+
+        .message.is-collapsed .collapsed-preview {
+          display: block;
+        }
+
+        .message.is-collapsed .message-body-wrapper {
+          max-height: 0 !important;
+          opacity: 0;
+        }
+
+        .message.is-collapsed .message-actions {
+          display: none;
         }
 
         .empty-state {
@@ -301,6 +470,23 @@ export class MessageStream extends HTMLElement {
         }
       </style>
 
+      <div class="message-toolbar" id="toolbar" style="display: none;">
+        <button class="toolbar-btn" id="collapse-all-btn" title="Collapse all messages">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 14l-5-5-5 5"/>
+            <path d="M17 9l-5-5-5 5"/>
+          </svg>
+          Collapse All
+        </button>
+        <button class="toolbar-btn" id="expand-all-btn" title="Expand all messages">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M7 10l5 5 5-5"/>
+            <path d="M7 15l5 5 5-5"/>
+          </svg>
+          Expand All
+        </button>
+      </div>
+
       <div class="message-container" id="messages">
         <div class="empty-state">
           <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -319,13 +505,45 @@ export class MessageStream extends HTMLElement {
         this.autoScroll = isAtBottom;
       }
     });
+
+    // Toolbar button handlers
+    const collapseAllBtn = this.shadowRoot.getElementById('collapse-all-btn');
+    const expandAllBtn = this.shadowRoot.getElementById('expand-all-btn');
+
+    collapseAllBtn?.addEventListener('click', () => this.collapseAll());
+    expandAllBtn?.addEventListener('click', () => this.expandAll());
+
+    // One-time delegated click handling (prevents duplicate listeners during re-renders/appends)
+    if (!this.isClickHandlerAttached) {
+      this.isClickHandlerAttached = true;
+      const messageContainer = this.shadowRoot.getElementById('messages');
+      messageContainer?.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+
+        const toggleBtn = target.closest('.collapse-toggle') as HTMLElement | null;
+        if (toggleBtn) {
+          e.stopPropagation();
+          const messageId = toggleBtn.getAttribute('data-id');
+          if (messageId) this.toggleMessageCollapse(messageId);
+          return;
+        }
+
+        const preview = target.closest('.collapsed-preview') as HTMLElement | null;
+        if (preview) {
+          const messageId = preview.getAttribute('data-id');
+          if (messageId) this.toggleMessageCollapse(messageId);
+        }
+      });
+    }
   }
 
   private renderMessages() {
     const container = this.shadowRoot?.getElementById('messages');
+    const toolbar = this.shadowRoot?.getElementById('toolbar');
     if (!container) return;
 
     if (this.messages.length === 0) {
+      if (toolbar) toolbar.style.display = 'none';
       container.innerHTML = `
         <div class="empty-state">
           <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -336,6 +554,9 @@ export class MessageStream extends HTMLElement {
       `;
       return;
     }
+
+    // Show toolbar when there are messages
+    if (toolbar) toolbar.style.display = 'flex';
 
     container.innerHTML = this.messages.map(msg => this.renderMessage(msg)).join('');
     this.scrollToBottom();
@@ -352,20 +573,30 @@ export class MessageStream extends HTMLElement {
     const role = agent?.role || '';
 
     const formattedContent = parseBasicFormatting(escapeHtml(message.content));
+    const isCollapsed = this.collapsedMessages.has(message.id);
+    const previewText = message.content.slice(0, 80).replace(/\n/g, ' ') + (message.content.length > 80 ? '...' : '');
 
     return `
-      <div class="message ${isInterjection ? 'interjection' : ''} ${isSecretary ? 'secretary' : ''}" data-id="${message.id}">
+      <div class="message ${isInterjection ? 'interjection' : ''} ${isSecretary ? 'secretary' : ''} ${isCollapsed ? 'is-collapsed' : ''}" data-id="${message.id}">
         <div class="avatar" style="background: ${color}20; color: ${color};">
           ${initials}
         </div>
         <div class="message-content">
           <div class="message-header">
+            <button class="collapse-toggle ${isCollapsed ? 'collapsed' : ''}" data-id="${message.id}" title="${isCollapsed ? 'Expand' : 'Collapse'}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </button>
             <span class="agent-name" style="color: ${color};">${escapeHtml(name)}</span>
             ${role ? `<span class="message-role">${escapeHtml(role)}</span>` : ''}
             <span class="message-time">${formatRelativeTime(message.createdAt)}</span>
             ${message.weight > 0 ? `<span class="weight-badge">+${message.weight}</span>` : ''}
           </div>
-          <div class="message-body">${formattedContent}</div>
+          <div class="collapsed-preview" data-id="${message.id}">${escapeHtml(previewText)}</div>
+          <div class="message-body-wrapper ${isCollapsed ? 'collapsed' : ''}">
+            <div class="message-body">${formattedContent}</div>
+          </div>
           <div class="message-actions">
             <button class="action-btn like-btn" data-id="${message.id}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -388,7 +619,11 @@ export class MessageStream extends HTMLElement {
 
   private appendMessage(message: Message) {
     const container = this.shadowRoot?.getElementById('messages');
+    const toolbar = this.shadowRoot?.getElementById('toolbar');
     if (!container) return;
+
+    // Show toolbar when there are messages
+    if (toolbar) toolbar.style.display = 'flex';
 
     // Remove empty state if present
     const emptyState = container.querySelector('.empty-state');
@@ -405,9 +640,53 @@ export class MessageStream extends HTMLElement {
     container.insertAdjacentHTML('beforeend', this.renderMessage(message));
   }
 
+  private toggleMessageCollapse(messageId: string) {
+    const messageEl = this.shadowRoot?.querySelector(`.message[data-id="${messageId}"]`);
+    if (!messageEl) return;
+
+    const isCurrentlyCollapsed = this.collapsedMessages.has(messageId);
+
+    if (isCurrentlyCollapsed) {
+      this.collapsedMessages.delete(messageId);
+      messageEl.classList.remove('is-collapsed');
+      messageEl.querySelector('.collapse-toggle')?.classList.remove('collapsed');
+      messageEl.querySelector('.message-body-wrapper')?.classList.remove('collapsed');
+    } else {
+      this.collapsedMessages.add(messageId);
+      messageEl.classList.add('is-collapsed');
+      messageEl.querySelector('.collapse-toggle')?.classList.add('collapsed');
+      messageEl.querySelector('.message-body-wrapper')?.classList.add('collapsed');
+    }
+  }
+
+  private collapseAll() {
+    this.messages.forEach(msg => {
+      this.collapsedMessages.add(msg.id);
+    });
+    
+    this.shadowRoot?.querySelectorAll('.message').forEach(messageEl => {
+      messageEl.classList.add('is-collapsed');
+      messageEl.querySelector('.collapse-toggle')?.classList.add('collapsed');
+      messageEl.querySelector('.message-body-wrapper')?.classList.add('collapsed');
+    });
+  }
+
+  private expandAll() {
+    this.collapsedMessages.clear();
+    
+    this.shadowRoot?.querySelectorAll('.message').forEach(messageEl => {
+      messageEl.classList.remove('is-collapsed');
+      messageEl.querySelector('.collapse-toggle')?.classList.remove('collapsed');
+      messageEl.querySelector('.message-body-wrapper')?.classList.remove('collapsed');
+    });
+  }
+
   private addStreamingBubble(agentId: string) {
     const container = this.shadowRoot?.getElementById('messages');
     if (!container) return;
+
+    // Remove thinking indicator when streaming starts
+    this.hideThinkingIndicator(agentId);
 
     const agent = this.agents.get(agentId);
     const color = agent?.color || 'var(--color-primary)';
@@ -421,10 +700,17 @@ export class MessageStream extends HTMLElement {
         </div>
         <div class="message-content">
           <div class="message-header">
-            <span class="agent-name" style="color: ${color};">${name}</span>
-            <span class="message-time">now</span>
+            <span class="agent-name" style="color: ${color};">${escapeHtml(name)}</span>
+            <span class="writing-badge" style="background: ${color}20; color: ${color};">
+              writing
+              <span class="writing-dots">
+                <span style="background: ${color};"></span>
+                <span style="background: ${color};"></span>
+                <span style="background: ${color};"></span>
+              </span>
+            </span>
           </div>
-          <div class="message-body streaming-body"><span class="streaming-cursor"></span></div>
+          <div class="message-body streaming-body"><span class="streaming-cursor" style="background: ${color};"></span></div>
         </div>
       </div>
     `);
@@ -445,6 +731,10 @@ export class MessageStream extends HTMLElement {
     const container = this.shadowRoot?.getElementById('messages');
     if (!container) return;
 
+    // Don't show duplicate thinking indicators
+    const existingIndicator = container.querySelector(`.thinking-message[data-agent="${agentId}"]`);
+    if (existingIndicator) return;
+
     const agent = this.agents.get(agentId);
     const color = agent?.color || 'var(--color-primary)';
     const name = agent?.name || 'Agent';
@@ -452,18 +742,20 @@ export class MessageStream extends HTMLElement {
 
     container.insertAdjacentHTML('beforeend', `
       <div class="message thinking-message" data-agent="${agentId}">
-        <div class="avatar" style="background: ${color}20; color: ${color};">
+        <div class="avatar" style="background: ${color}20; color: ${color}; box-shadow: 0 0 0 2px ${color}40;">
           ${initials}
         </div>
         <div class="message-content">
           <div class="message-header">
-            <span class="agent-name" style="color: ${color};">${name}</span>
-            <span class="message-time">thinking...</span>
+            <span class="agent-name" style="color: ${color};">${escapeHtml(name)}</span>
           </div>
-          <div class="message-body">
+          <div class="message-body" style="border-left: 3px solid ${color};">
             <div class="thinking-indicator">
-              <span></span><span></span><span></span>
+              <span style="background: ${color};"></span>
+              <span style="background: ${color};"></span>
+              <span style="background: ${color};"></span>
             </div>
+            <span class="thinking-label">thinking...</span>
           </div>
         </div>
       </div>

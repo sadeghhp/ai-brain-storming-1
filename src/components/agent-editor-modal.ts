@@ -1,9 +1,10 @@
 // ============================================
 // AI Brainstorm - Agent Editor Modal
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import { presetStorage, providerStorage } from '../storage/storage-manager';
+import { presetCategories } from '../agents/presets';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import type { Agent, AgentPreset, LLMProvider, CreateAgent } from '../types';
@@ -37,6 +38,7 @@ export class AgentEditorModal extends HTMLElement {
   private providers: LLMProvider[] = [];
   private selectedPresetId: string | null = null;
   private formData: Partial<AgentEditorResult> = {};
+  private expandedCategories: Set<string> = new Set();
 
   static get observedAttributes() {
     return ['open'];
@@ -124,6 +126,72 @@ export class AgentEditorModal extends HTMLElement {
       return this.providers.find(p => p.id === providerId);
     }
     return this.providers.find(p => p.isActive);
+  }
+
+  private getPresetsByCategory(): Map<string, AgentPreset[]> {
+    const grouped = new Map<string, AgentPreset[]>();
+    
+    // Initialize all categories
+    for (const category of presetCategories) {
+      if (category.id !== 'custom') { // Skip 'custom' category since we have Custom Agent option
+        grouped.set(category.id, []);
+      }
+    }
+    
+    // Group presets by category
+    for (const preset of this.presets) {
+      const categoryPresets = grouped.get(preset.category);
+      if (categoryPresets) {
+        categoryPresets.push(preset);
+      }
+    }
+    
+    return grouped;
+  }
+
+  private renderPresetCategories(): string {
+    const grouped = this.getPresetsByCategory();
+    
+    // Auto-expand first category with presets if none expanded
+    if (this.expandedCategories.size === 0) {
+      for (const [categoryId, presets] of grouped) {
+        if (presets.length > 0) {
+          this.expandedCategories.add(categoryId);
+          break;
+        }
+      }
+    }
+    
+    return presetCategories
+      .filter(cat => cat.id !== 'custom')
+      .map(category => {
+        const presets = grouped.get(category.id) || [];
+        if (presets.length === 0) return ''; // Hide empty categories
+        
+        const isExpanded = this.expandedCategories.has(category.id);
+        
+        return `
+          <div class="preset-category" data-category="${category.id}">
+            <div class="preset-category-header ${isExpanded ? 'expanded' : ''}" data-category="${category.id}">
+              <div class="preset-category-title">
+                <span class="preset-category-icon">${category.icon}</span>
+                <span>${category.name}</span>
+                <span class="preset-category-count">${presets.length}</span>
+              </div>
+              <svg class="preset-category-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </div>
+            <div class="preset-category-content ${isExpanded ? 'expanded' : ''}">
+              ${presets.map(p => `
+                <div class="preset-chip ${this.selectedPresetId === p.id ? 'selected' : ''}" data-preset-id="${p.id}">
+                  ${p.name}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('');
   }
 
   private render() {
@@ -327,15 +395,16 @@ export class AgentEditorModal extends HTMLElement {
         }
 
         .preset-selector {
-          display: flex;
-          gap: var(--space-2);
-          flex-wrap: wrap;
-          padding: var(--space-3);
           background: var(--color-bg-tertiary);
           border: 1px solid var(--color-border);
           border-radius: var(--radius-md);
-          max-height: 140px;
+          max-height: 280px;
           overflow-y: auto;
+        }
+
+        .preset-custom-option {
+          padding: var(--space-3);
+          border-bottom: 1px solid var(--color-border);
         }
 
         .preset-chip {
@@ -347,6 +416,7 @@ export class AgentEditorModal extends HTMLElement {
           font-size: var(--text-sm);
           transition: all var(--transition-fast);
           color: var(--color-text-secondary);
+          display: inline-block;
         }
 
         .preset-chip:hover {
@@ -359,6 +429,82 @@ export class AgentEditorModal extends HTMLElement {
           background: var(--color-primary-dim);
           border-color: var(--color-primary);
           color: var(--color-primary);
+        }
+
+        .preset-category {
+          border-bottom: 1px solid var(--color-border);
+        }
+
+        .preset-category:last-child {
+          border-bottom: none;
+        }
+
+        .preset-category-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-3);
+          cursor: pointer;
+          transition: background var(--transition-fast);
+          user-select: none;
+        }
+
+        .preset-category-header:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .preset-category-header.expanded {
+          background: var(--color-surface);
+        }
+
+        .preset-category-title {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-secondary);
+        }
+
+        .preset-category-icon {
+          font-size: var(--text-base);
+        }
+
+        .preset-category-count {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          background: var(--color-surface);
+          padding: 2px 6px;
+          border-radius: var(--radius-sm);
+          margin-left: var(--space-2);
+        }
+
+        .preset-category-chevron {
+          transition: transform 0.2s ease;
+          color: var(--color-text-tertiary);
+        }
+
+        .preset-category-header.expanded .preset-category-chevron {
+          transform: rotate(180deg);
+        }
+
+        .preset-category-content {
+          display: none;
+          padding: var(--space-3);
+          padding-top: 0;
+          gap: var(--space-2);
+          flex-wrap: wrap;
+        }
+
+        .preset-category-content.expanded {
+          display: flex;
+        }
+
+        .preset-empty-category {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          font-style: italic;
+          padding: var(--space-2);
         }
 
         .slider-group {
@@ -514,14 +660,12 @@ export class AgentEditorModal extends HTMLElement {
               <div class="section">
                 <div class="section-title">Start from Template (Optional)</div>
                 <div class="preset-selector">
-                  <div class="preset-chip ${!this.selectedPresetId ? 'selected' : ''}" data-preset-id="">
-                    Custom Agent
-                  </div>
-                  ${this.presets.map(p => `
-                    <div class="preset-chip ${this.selectedPresetId === p.id ? 'selected' : ''}" data-preset-id="${p.id}">
-                      ${p.name}
+                  <div class="preset-custom-option">
+                    <div class="preset-chip ${!this.selectedPresetId ? 'selected' : ''}" data-preset-id="">
+                      Custom Agent
                     </div>
-                  `).join('')}
+                  </div>
+                  ${this.renderPresetCategories()}
                 </div>
               </div>
 
@@ -673,9 +817,32 @@ export class AgentEditorModal extends HTMLElement {
       }
     });
 
+    // Category accordion toggle
+    this.shadowRoot?.querySelectorAll('.preset-category-header').forEach(header => {
+      header.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const categoryId = header.getAttribute('data-category');
+        if (!categoryId) return;
+        
+        const content = header.nextElementSibling as HTMLElement;
+        const isExpanded = header.classList.contains('expanded');
+        
+        if (isExpanded) {
+          this.expandedCategories.delete(categoryId);
+          header.classList.remove('expanded');
+          content?.classList.remove('expanded');
+        } else {
+          this.expandedCategories.add(categoryId);
+          header.classList.add('expanded');
+          content?.classList.add('expanded');
+        }
+      });
+    });
+
     // Preset selection
     this.shadowRoot?.querySelectorAll('.preset-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation();
         const presetId = chip.getAttribute('data-preset-id');
         
         // Update UI

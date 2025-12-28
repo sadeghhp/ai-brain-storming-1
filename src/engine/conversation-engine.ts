@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.0.0
+// Version: 2.1.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -270,8 +270,9 @@ export class ConversationEngine {
     // Create turn record
     const turn = await this.turnManager!.createTurn(schedule);
 
-    // Notify thinking
+    // Notify thinking - emit event for UI components
     this.options.onAgentThinking?.(agent.id);
+    eventBus.emit('agent:thinking', agent.id);
 
     // Initialize streaming content
     this.streamingContent.set(agent.id, '');
@@ -281,10 +282,16 @@ export class ConversationEngine {
       const current = this.streamingContent.get(agent.id) || '';
       this.streamingContent.set(agent.id, current + chunk);
       this.options.onStreamChunk?.(agent.id, chunk);
+      // Emit stream chunk event for UI components
+      eventBus.emit('stream:chunk', { agentId: agent.id, content: chunk });
     });
 
-    // Clear streaming content
+    // Clear streaming content and emit completion
     this.streamingContent.delete(agent.id);
+    eventBus.emit('stream:complete', { agentId: agent.id });
+
+    // Set agent back to idle
+    eventBus.emit('agent:idle', agent.id);
 
     if (result.success && result.message) {
       this.options.onAgentSpeaking?.(agent.id, result.message.content);
