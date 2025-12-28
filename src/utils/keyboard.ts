@@ -32,6 +32,16 @@ export function registerShortcut(shortcut: KeyboardShortcut): () => void {
  * Handle keydown events
  */
 export function handleKeydown(event: KeyboardEvent): boolean {
+  // If keyboard shortcuts overlay is open, let Escape close it first
+  const existingOverlay = document.querySelector('.shortcuts-overlay');
+  if (existingOverlay && event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    existingOverlay.remove();
+    return true;
+  }
+
   // Don't handle if user is typing in an input
   const target = event.target as HTMLElement;
   if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -235,13 +245,28 @@ function showShortcutsHelp(): void {
         `).join('')}
       </div>
       <div class="shortcuts-hint">
-        Press Escape or click anywhere to close
+        Press Escape or click outside to close
       </div>
     </div>
   `;
 
+  // Prevent outside-click handlers behind the overlay from firing (e.g. closing other modals)
+  overlay.addEventListener(
+    'pointerdown',
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    { capture: true }
+  );
+
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const content = overlay.querySelector('.shortcuts-content');
+    // Close only when clicking outside the content (on the dark backdrop)
+    if (!content || e.target === overlay) {
       overlay.remove();
     }
   });
@@ -253,5 +278,5 @@ function showShortcutsHelp(): void {
 initializeDefaultShortcuts();
 
 // Set up global listener
-window.addEventListener('keydown', handleKeydown);
+window.addEventListener('keydown', handleKeydown, { capture: true });
 
