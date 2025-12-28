@@ -1,6 +1,6 @@
 /* ============================================
    AI Brainstorm - Animations
-   Version: 1.0.0
+   Version: 1.1.0
    ============================================ */
 
 /* Keyframe Animations */
@@ -281,5 +281,160 @@
 
 .skeleton-circle {
   border-radius: 50%;
+}
+
+/* ============================================
+   Turn Queue & Conversation Flow Animations
+   ============================================ */
+
+/* Typewriter cursor blink */
+@keyframes typewriterCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.typewriter-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.2em;
+  background: var(--color-primary);
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: typewriterCursor 0.8s step-end infinite;
+}
+
+/* Wave animation for waiting agents */
+@keyframes wave {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-3px);
+  }
+  75% {
+    transform: translateY(3px);
+  }
+}
+
+.animate-wave {
+  animation: wave 2s ease-in-out infinite;
+}
+
+.animate-wave-delay-1 { animation-delay: 0.1s; }
+.animate-wave-delay-2 { animation-delay: 0.2s; }
+.animate-wave-delay-3 { animation-delay: 0.3s; }
+
+/* Spotlight/glow effect for current speaker */
+@keyframes spotlight {
+  0%, 100% {
+    box-shadow: 0 0 0 0 var(--glow-color, var(--color-primary)),
+                0 0 8px 2px var(--glow-color, var(--color-primary));
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--glow-color, var(--color-primary)),
+                0 0 20px 6px var(--glow-color, var(--color-primary));
+  }
+}
+
+.animate-spotlight {
+  animation: spotlight 1.5s ease-in-out infinite;
+}
+
+/* Progress ring animation */
+@keyframes progressRing {
+  0% {
+    stroke-dashoffset: 100;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.progress-ring-circle {
+  transition: stroke-dashoffset 0.35s;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
+/* Flow connector animation */
+@keyframes flowPulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.flow-connector {
+  animation: flowPulse 1.5s ease-in-out infinite;
+}
+
+/* Dot bounce for thinking indicator */
+@keyframes dotBounce {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+.thinking-dot {
+  animation: dotBounce 1.4s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(1) { animation-delay: 0s; }
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Text reveal animation for streaming */
+@keyframes textReveal {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.text-reveal {
+  animation: textReveal 0.15s ease-out forwards;
+}
+
+/* Current turn badge pulse */
+@keyframes currentTurnPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 var(--badge-color, var(--color-success));
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+.current-turn-badge {
+  animation: currentTurnPulse 2s ease-in-out infinite;
+}
+
+/* Queue item entrance */
+@keyframes queueSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.queue-item-enter {
+  animation: queueSlideIn 0.3s ease-out forwards;
 }
 

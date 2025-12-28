@@ -91,6 +91,22 @@ export class BrainstormDB extends Dexie {
       }
       console.log('[DB] Migrated LLM providers to v2 format');
     });
+
+    // Version 3: Add compound index for userInterjections query patterns
+    // (Fixes Dexie warning: compound index [conversationId+processed])
+    this.version(3).stores({
+      conversations: 'id, status, createdAt, updatedAt',
+      turns: 'id, conversationId, agentId, [conversationId+round], [conversationId+round+sequence], state',
+      agents: 'id, conversationId, [conversationId+order], isSecretary',
+      messages: 'id, conversationId, turnId, agentId, [conversationId+round], createdAt, type',
+      notebooks: 'agentId',
+      resultDrafts: 'conversationId',
+      agentPresets: 'id, category, isBuiltIn, name',
+      llmProviders: 'id, apiFormat, isActive',
+      userInterjections: 'id, conversationId, [conversationId+afterRound], processed, [conversationId+processed]',
+      userReactions: 'id, messageId',
+      appSettings: 'id',
+    });
   }
 }
 

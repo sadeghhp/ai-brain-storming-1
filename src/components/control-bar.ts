@@ -211,7 +211,7 @@ export class ControlBar extends HTMLElement {
 
         <div class="speed-control">
           <span class="speed-label">Speed</span>
-          <input type="range" class="speed-slider" id="speed-slider" min="0" max="10000" value="${this.speedMs}" step="500">
+          <input type="range" class="speed-slider" id="speed-slider" min="500" max="10000" value="${this.speedMs}" step="500">
           <span class="speed-value" id="speed-value">${this.formatSpeed(this.speedMs)}</span>
         </div>
 
@@ -229,7 +229,7 @@ export class ControlBar extends HTMLElement {
   private setupEventHandlers() {
     // Play/Start button
     this.shadowRoot?.getElementById('play-btn')?.addEventListener('click', () => {
-      if (this.status === 'idle') {
+      if (this.status === 'idle' || this.status === 'completed') {
         this.dispatchEvent(new CustomEvent('start'));
       } else if (this.status === 'paused') {
         this.dispatchEvent(new CustomEvent('resume'));
@@ -293,10 +293,13 @@ export class ControlBar extends HTMLElement {
         break;
 
       case 'completed':
-        playBtn.disabled = true;
+        // Allow restarting from completed state
+        playBtn.disabled = false;
         pauseBtn.disabled = true;
         stopBtn.disabled = true;
         resetBtn.disabled = false;
+        playBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+        playBtn.title = 'Continue conversation';
         break;
     }
 

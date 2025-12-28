@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.2.0
+// Version: 2.3.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -15,7 +15,7 @@ import { conversationStorage, turnStorage, messageStorage } from '../storage/sto
 import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
 import { selectFirstSpeaker, getStrategyById } from '../strategies/starting-strategies';
-import type { Conversation, Turn, Message, ConversationStatus, ConversationMode, StartingStrategyId } from '../types';
+import type { Conversation, Turn, Message, ConversationStatus, ConversationMode, StartingStrategyId, TurnQueueState, TurnQueueItem } from '../types';
 
 export interface ConversationEngineOptions {
   onAgentThinking?: (agentId: string) => void;
@@ -41,6 +41,8 @@ export class ConversationEngine {
   private stateMachine: ConversationStateMachine;
   private options: ConversationEngineOptions;
   private streamingContent: Map<string, string> = new Map();
+  private completedAgentsInRound: Set<string> = new Set();
+  private currentTurnAgentId: string | null = null;
 
   constructor(conversation: Conversation, options: ConversationEngineOptions = {}) {
     this.conversation = conversation;
@@ -85,8 +87,19 @@ export class ConversationEngine {
       return;
     }
 
+    // #region debug log H0
+    (() => { const payload = {location:'src/engine/conversation-engine.ts:start',message:'start() called',data:{conversationId:this.conversation.id,status:this.stateMachine.currentStatus,currentRound:this.conversation.currentRound,speedMs:this.conversation.speedMs,maxRounds:this.conversation.maxRounds ?? null},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H0'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+    // #endregion
+
+    // Reset tracking for new run
+    this.completedAgentsInRound.clear();
+    this.currentTurnAgentId = null;
+
     await this.updateConversationStatus('running');
     eventBus.emit('conversation:started', this.conversation.id);
+
+    // Emit initial turn queue state
+    this.emitTurnQueueState();
 
     await this.runLoop();
   }
@@ -201,6 +214,14 @@ export class ConversationEngine {
   }
 
   /**
+   * Set conversation speed (delay between turns)
+   */
+  async setSpeedMs(speedMs: number): Promise<void> {
+    this.conversation.speedMs = Math.max(500, speedMs);
+    await conversationStorage.update(this.conversation.id, { speedMs: this.conversation.speedMs });
+  }
+
+  /**
    * Main run loop
    */
   private async runLoop(): Promise<void> {
@@ -255,9 +276,16 @@ export class ConversationEngine {
    * Execute a single turn
    */
   private async executeTurn(schedule: TurnSchedule): Promise<TurnResult> {
+    // #region debug log H1
+    (() => { const payload = {location:'src/engine/conversation-engine.ts:executeTurn',message:'executeTurn() enter',data:{conversationId:this.conversation.id,round:schedule.round,sequence:schedule.sequence,agentId:schedule.agentId,engineRound:this.conversation.currentRound,completedAgentsInRoundSize:this.completedAgentsInRound.size},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+    // #endregion
+
     // Check idempotency - skip if already completed
     const isCompleted = await this.turnManager?.isTurnCompleted(schedule.round, schedule.sequence);
     if (isCompleted) {
+      // #region debug log H1
+      (() => { const payload = {location:'src/engine/conversation-engine.ts:executeTurn',message:'executeTurn() skipping completed turn',data:{conversationId:this.conversation.id,round:schedule.round,sequence:schedule.sequence,agentId:schedule.agentId},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+      // #endregion
       console.log(`[Engine] Skipping completed turn: round=${schedule.round}, seq=${schedule.sequence}`);
       return { success: true, tokensUsed: 0 };
     }
@@ -267,6 +295,12 @@ export class ConversationEngine {
     if (!agent) {
       return { success: false, error: 'Agent not found', tokensUsed: 0 };
     }
+
+    // Track current turn agent
+    this.currentTurnAgentId = agent.id;
+
+    // Emit updated turn queue state
+    this.emitTurnQueueState();
 
     // Create turn record
     const turn = await this.turnManager!.createTurn(schedule);
@@ -287,9 +321,20 @@ export class ConversationEngine {
       eventBus.emit('stream:chunk', { agentId: agent.id, content: chunk });
     });
 
+    // #region debug log H2
+    (() => { const payload = {location:'src/engine/conversation-engine.ts:executeTurn',message:'executeTurn() got TurnExecutor result',data:{conversationId:this.conversation.id,round:schedule.round,sequence:schedule.sequence,agentId:agent.id,success:result.success,tokensUsed:result.tokensUsed,messageLen:result.message?.content?.length ?? 0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+    // #endregion
+
     // Clear streaming content and emit completion
     this.streamingContent.delete(agent.id);
     eventBus.emit('stream:complete', { agentId: agent.id });
+
+    // Mark agent as completed in this round
+    this.completedAgentsInRound.add(agent.id);
+    this.currentTurnAgentId = null;
+
+    // Emit updated turn queue state
+    this.emitTurnQueueState();
 
     // Set agent back to idle
     eventBus.emit('agent:idle', agent.id);
@@ -308,6 +353,9 @@ export class ConversationEngine {
   private async onRoundComplete(): Promise<void> {
     const round = this.conversation.currentRound;
     
+    // Reset completed agents tracking for next round
+    this.completedAgentsInRound.clear();
+    
     // Update round in database
     this.conversation.currentRound++;
     await conversationStorage.update(this.conversation.id, {
@@ -317,6 +365,9 @@ export class ConversationEngine {
     // Update turn manager
     this.turnManager?.advanceRound();
     this.interjectionHandler.setCurrentRound(this.conversation.currentRound);
+
+    // Emit updated turn queue for new round
+    this.emitTurnQueueState();
 
     // Generate secretary round summary (if exists)
     // This summary is stored as a visible system message so agents can reference it
@@ -379,6 +430,73 @@ export class ConversationEngine {
    */
   getConversation(): Conversation {
     return this.conversation;
+  }
+
+  /**
+   * Build and emit turn queue state
+   */
+  private emitTurnQueueState(): void {
+    const nonSecretaryAgents = this.agents.filter(a => !a.entityData.isSecretary);
+    
+    // Build queue items
+    const queue: TurnQueueItem[] = nonSecretaryAgents.map((agent, index) => {
+      let status: 'completed' | 'current' | 'waiting';
+      
+      if (this.completedAgentsInRound.has(agent.id)) {
+        status = 'completed';
+      } else if (this.currentTurnAgentId === agent.id) {
+        status = 'current';
+      } else {
+        status = 'waiting';
+      }
+
+      return {
+        agentId: agent.id,
+        agentName: agent.entityData.name,
+        agentColor: agent.entityData.color,
+        status,
+        order: index,
+      };
+    });
+
+    const state: TurnQueueState = {
+      conversationId: this.conversation.id,
+      round: this.conversation.currentRound,
+      currentIndex: this.completedAgentsInRound.size,
+      totalAgents: nonSecretaryAgents.length,
+      queue,
+    };
+
+    // Emit the appropriate event
+    if (this.currentTurnAgentId) {
+      eventBus.emit('turn:queued', state);
+    } else {
+      eventBus.emit('turn:order-updated', state);
+    }
+  }
+
+  /**
+   * Get current turn queue state (for initial load)
+   */
+  getTurnQueueState(): TurnQueueState | null {
+    const nonSecretaryAgents = this.agents.filter(a => !a.entityData.isSecretary);
+    if (nonSecretaryAgents.length === 0) return null;
+
+    const queue: TurnQueueItem[] = nonSecretaryAgents.map((agent, index) => ({
+      agentId: agent.id,
+      agentName: agent.entityData.name,
+      agentColor: agent.entityData.color,
+      status: 'waiting' as const,
+      order: index,
+    }));
+
+    return {
+      conversationId: this.conversation.id,
+      round: this.conversation.currentRound,
+      currentIndex: 0,
+      totalAgents: nonSecretaryAgents.length,
+      queue,
+    };
   }
 
   // ----- Static Factory Methods -----

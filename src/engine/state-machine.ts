@@ -12,7 +12,7 @@ const validTransitions: Record<ConversationStatus, ConversationStatus[]> = {
   idle: ['running'],
   running: ['paused', 'completed', 'idle'], // idle for reset
   paused: ['running', 'idle'], // idle for reset
-  completed: ['idle'], // reset to idle
+  completed: ['idle', 'running'], // reset to idle OR restart conversation
 };
 
 /**

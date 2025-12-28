@@ -42,6 +42,10 @@ export class TurnExecutor {
     // Create abort controller
     this.abortController = new AbortController();
 
+    // #region debug log H2
+    (() => { const payload = {location:'src/engine/turn-executor.ts:execute',message:'TurnExecutor.execute() enter',data:{conversationId:this.conversation.id,turnId:turn.id,agentId:agent.id,providerId:agent.llmProviderId,model:agent.modelId,streaming:Boolean(onStreamChunk)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+    // #endregion
+
     try {
       // Mark turn as running
       await turnStorage.updateState(turn.id, 'running');
@@ -58,6 +62,7 @@ export class TurnExecutor {
       // Execute LLM request
       let response: LLMResponse;
       let fullContent = '';
+      let chunkCount = 0;
 
       if (onStreamChunk) {
         // Streaming mode
@@ -71,6 +76,7 @@ export class TurnExecutor {
           },
           (chunk) => {
             fullContent += chunk.content;
+            chunkCount++;
             onStreamChunk(chunk.content);
           }
         );
@@ -83,6 +89,15 @@ export class TurnExecutor {
           signal: this.abortController.signal,
         });
         fullContent = response.content;
+      }
+
+      // #region debug log H2
+      (() => { const payload = {location:'src/engine/turn-executor.ts:execute',message:'LLM request completed',data:{conversationId:this.conversation.id,turnId:turn.id,agentId:agent.id,streaming:Boolean(onStreamChunk),chunkCount,fullContentLen:fullContent.length,finishReason:response.finishReason ?? null,tokensUsed:response.tokensUsed ?? 0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+      // #endregion
+
+      // Guard against empty responses
+      if (!fullContent.trim()) {
+        throw new Error('Empty response from LLM provider');
       }
 
       // Create message
@@ -115,6 +130,10 @@ export class TurnExecutor {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      // #region debug log H2
+      (() => { const payload = {location:'src/engine/turn-executor.ts:execute',message:'TurnExecutor.execute() error',data:{conversationId:this.conversation.id,turnId:turn.id,agentId:agent.id,error:errorMessage,isAbortError:(error instanceof DOMException && error.name==='AbortError')},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+      // #endregion
       
       // Check if aborted
       if (error instanceof DOMException && error.name === 'AbortError') {

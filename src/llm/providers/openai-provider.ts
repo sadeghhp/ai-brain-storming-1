@@ -190,7 +190,14 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw this.createError(`HTTP_${response.status}`, errorText, response.status >= 500);
+      const hint =
+        response.status === 404
+          ? `Endpoint not found. Check this provider's Base URL.\n` +
+            `This app expects OpenAI-style endpoints at:\n` +
+            `- ${this.config.baseUrl}/models\n` +
+            `- ${this.config.baseUrl}/chat/completions\n`
+          : '';
+      throw this.createError(`HTTP_${response.status}`, hint ? `${hint}\n${errorText}` : errorText, response.status >= 500);
     }
 
     if (!response.body) {

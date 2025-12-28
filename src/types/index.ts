@@ -212,6 +212,22 @@ export interface LLMModel {
 
 // ----- Event Types -----
 
+export interface TurnQueueItem {
+  agentId: string;
+  agentName: string;
+  agentColor: string;
+  status: 'completed' | 'current' | 'waiting';
+  order: number;
+}
+
+export interface TurnQueueState {
+  conversationId: string;
+  round: number;
+  currentIndex: number;
+  totalAgents: number;
+  queue: TurnQueueItem[];
+}
+
 export interface AppEvents {
   'conversation:created': Conversation;
   'conversation:updated': Conversation;
@@ -225,6 +241,8 @@ export interface AppEvents {
   'turn:started': Turn;
   'turn:completed': Turn;
   'turn:failed': Turn;
+  'turn:queued': TurnQueueState;
+  'turn:order-updated': TurnQueueState;
   'message:created': Message;
   'message:updated': Message;
   'agent:speaking': string;

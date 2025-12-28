@@ -251,8 +251,9 @@ export abstract class BaseLLMProvider {
       for (const line of lines) {
         const trimmed = line.trim();
         
-        if (trimmed.startsWith('data: ')) {
-          const data = trimmed.slice(6);
+        // Accept both "data: " (with space) and "data:" (without space)
+        if (trimmed.startsWith('data:')) {
+          const data = trimmed.slice('data:'.length).trimStart();
           
           if (data === '[DONE]') {
             return;

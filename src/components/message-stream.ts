@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Message Stream Component
-// Version: 1.2.1
+// Version: 1.3.0
 // ============================================
 
 import { messageStorage, agentStorage } from '../storage/storage-manager';
@@ -459,14 +459,173 @@ export class MessageStream extends HTMLElement {
         .streaming-cursor {
           display: inline-block;
           width: 2px;
-          height: 1em;
-          background: var(--color-primary);
-          margin-left: 2px;
-          animation: blink 1s step-end infinite;
+          height: 1.2em;
+          background: var(--cursor-color, var(--color-primary));
+          margin-left: 1px;
+          vertical-align: text-bottom;
+          animation: typewriterBlink 0.8s step-end infinite;
+          border-radius: 1px;
         }
 
-        @keyframes blink {
+        @keyframes typewriterBlink {
+          0%, 100% { opacity: 1; }
           50% { opacity: 0; }
+        }
+
+        /* Enhanced streaming body with word reveal */
+        .streaming-body {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .streaming-body .word-reveal {
+          display: inline;
+          animation: wordFadeIn 0.15s ease-out forwards;
+        }
+
+        @keyframes wordFadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(2px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        /* Enhanced thinking indicator with breathing effect */
+        .thinking-message {
+          animation: messageBreath 2s ease-in-out infinite;
+        }
+
+        @keyframes messageBreath {
+          0%, 100% { opacity: 0.9; }
+          50% { opacity: 1; }
+        }
+
+        .thinking-message .avatar {
+          animation: avatarPulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes avatarPulse {
+          0%, 100% {
+            box-shadow: 0 0 0 2px var(--avatar-glow-color, var(--color-primary))40;
+          }
+          50% {
+            box-shadow: 0 0 0 6px var(--avatar-glow-color, var(--color-primary))20,
+                        0 0 15px var(--avatar-glow-color, var(--color-primary))30;
+          }
+        }
+
+        /* Enhanced writing badge */
+        .streaming-message .message-header .writing-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--space-1);
+          padding: 3px 10px;
+          border-radius: var(--radius-full);
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          animation: writingBadgePulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes writingBadgePulse {
+          0%, 100% { 
+            opacity: 0.8;
+            transform: scale(1);
+          }
+          50% { 
+            opacity: 1;
+            transform: scale(1.02);
+          }
+        }
+
+        .streaming-message .writing-dots {
+          display: inline-flex;
+          gap: 3px;
+          margin-left: var(--space-1);
+        }
+
+        .streaming-message .writing-dots span {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          animation: writingDotsJump 1.2s ease-in-out infinite;
+        }
+
+        .streaming-message .writing-dots span:nth-child(2) {
+          animation-delay: 0.15s;
+        }
+
+        .streaming-message .writing-dots span:nth-child(3) {
+          animation-delay: 0.3s;
+        }
+
+        @keyframes writingDotsJump {
+          0%, 60%, 100% { 
+            transform: translateY(0);
+            opacity: 0.5;
+          }
+          30% { 
+            transform: translateY(-4px);
+            opacity: 1;
+          }
+        }
+
+        /* Current speaker highlight effect */
+        .streaming-message .avatar,
+        .thinking-message .avatar {
+          position: relative;
+        }
+
+        .streaming-message .avatar::before,
+        .thinking-message .avatar::before {
+          content: '';
+          position: absolute;
+          inset: -4px;
+          border-radius: var(--radius-full);
+          background: radial-gradient(circle, var(--avatar-glow-color, var(--color-primary))20 0%, transparent 70%);
+          animation: glowRing 2s ease-in-out infinite;
+          z-index: -1;
+        }
+
+        @keyframes glowRing {
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.1); }
+        }
+
+        /* Thinking indicator with bouncing dots */
+        .thinking-indicator {
+          display: flex;
+          gap: 6px;
+          align-items: center;
+        }
+
+        .thinking-indicator span {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          animation: thinkingBounce 1.4s ease-in-out infinite;
+        }
+
+        .thinking-indicator span:nth-child(2) {
+          animation-delay: 0.2s;
+        }
+
+        .thinking-indicator span:nth-child(3) {
+          animation-delay: 0.4s;
+        }
+
+        @keyframes thinkingBounce {
+          0%, 80%, 100% { 
+            transform: scale(0.6);
+            opacity: 0.4;
+          }
+          40% { 
+            transform: scale(1);
+            opacity: 1;
+          }
         }
       </style>
 
@@ -691,17 +850,24 @@ export class MessageStream extends HTMLElement {
     const agent = this.agents.get(agentId);
     const color = agent?.color || 'var(--color-primary)';
     const name = agent?.name || 'Agent';
+    const role = agent?.role || '';
     const initials = name.slice(0, 2).toUpperCase();
 
     container.insertAdjacentHTML('beforeend', `
-      <div class="message streaming-message" data-agent="${agentId}">
+      <div class="message streaming-message" data-agent="${agentId}" style="--avatar-glow-color: ${color}; --cursor-color: ${color};">
         <div class="avatar" style="background: ${color}20; color: ${color};">
           ${initials}
         </div>
         <div class="message-content">
           <div class="message-header">
             <span class="agent-name" style="color: ${color};">${escapeHtml(name)}</span>
+            ${role ? `<span class="message-role">${escapeHtml(role)}</span>` : ''}
             <span class="writing-badge" style="background: ${color}20; color: ${color};">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+                <path d="M2 2l7.586 7.586"/>
+              </svg>
               writing
               <span class="writing-dots">
                 <span style="background: ${color};"></span>
@@ -710,7 +876,7 @@ export class MessageStream extends HTMLElement {
               </span>
             </span>
           </div>
-          <div class="message-body streaming-body"><span class="streaming-cursor" style="background: ${color};"></span></div>
+          <div class="message-body streaming-body" style="border-left: 3px solid ${color};"><span class="streaming-cursor"></span></div>
         </div>
       </div>
     `);
@@ -735,27 +901,40 @@ export class MessageStream extends HTMLElement {
     const existingIndicator = container.querySelector(`.thinking-message[data-agent="${agentId}"]`);
     if (existingIndicator) return;
 
+    // Remove empty state if present
+    const emptyState = container.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+
     const agent = this.agents.get(agentId);
     const color = agent?.color || 'var(--color-primary)';
     const name = agent?.name || 'Agent';
+    const role = agent?.role || '';
     const initials = name.slice(0, 2).toUpperCase();
 
     container.insertAdjacentHTML('beforeend', `
-      <div class="message thinking-message" data-agent="${agentId}">
-        <div class="avatar" style="background: ${color}20; color: ${color}; box-shadow: 0 0 0 2px ${color}40;">
+      <div class="message thinking-message" data-agent="${agentId}" style="--avatar-glow-color: ${color};">
+        <div class="avatar" style="background: ${color}20; color: ${color};">
           ${initials}
         </div>
         <div class="message-content">
           <div class="message-header">
             <span class="agent-name" style="color: ${color};">${escapeHtml(name)}</span>
+            ${role ? `<span class="message-role">${escapeHtml(role)}</span>` : ''}
+            <span class="writing-badge" style="background: ${color}15; color: ${color};">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 6v6l4 2"/>
+              </svg>
+              thinking
+            </span>
           </div>
-          <div class="message-body" style="border-left: 3px solid ${color};">
+          <div class="message-body" style="border-left: 3px solid ${color}; background: ${color}08;">
             <div class="thinking-indicator">
               <span style="background: ${color};"></span>
               <span style="background: ${color};"></span>
               <span style="background: ${color};"></span>
             </div>
-            <span class="thinking-label">thinking...</span>
+            <span class="thinking-label">preparing response...</span>
           </div>
         </div>
       </div>

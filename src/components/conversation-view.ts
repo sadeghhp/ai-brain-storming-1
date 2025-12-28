@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation View Component
-// Version: 2.0.0
+// Version: 2.1.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -12,6 +12,8 @@ import './result-draft';
 import './secretary-panel';
 import './user-input';
 import './conversation-settings-modal';
+import './turn-queue';
+import './round-progress';
 
 export class ConversationView extends HTMLElement {
   private engine: ConversationEngine | null = null;
@@ -73,7 +75,19 @@ export class ConversationView extends HTMLElement {
       }
     });
 
+    eventBus.on('conversation:resumed', (id) => {
+      if (id === this.conversationId) {
+        this.updateControlBar();
+      }
+    });
+
     eventBus.on('conversation:stopped', (id) => {
+      if (id === this.conversationId) {
+        this.updateControlBar();
+      }
+    });
+
+    eventBus.on('conversation:reset', (id) => {
       if (id === this.conversationId) {
         this.updateControlBar();
       }
@@ -89,7 +103,10 @@ export class ConversationView extends HTMLElement {
   private updateControlBar() {
     const controlBar = this.shadowRoot?.querySelector('control-bar') as HTMLElement;
     if (controlBar && this.engine) {
-      controlBar.setAttribute('status', this.engine.getStatus());
+      const status = this.engine.getStatus();
+      controlBar.setAttribute('status', status);
+      // Update host data attribute for conditional styling
+      this.setAttribute('data-status', status);
     }
   }
 
@@ -408,6 +425,15 @@ export class ConversationView extends HTMLElement {
           width: 18px;
           height: 18px;
         }
+
+        /* Turn queue visibility based on status */
+        turn-queue {
+          display: none;
+        }
+
+        :host([data-status="running"]) turn-queue {
+          display: block;
+        }
       </style>
 
       <header class="conversation-header">
@@ -416,7 +442,7 @@ export class ConversationView extends HTMLElement {
           <div class="conv-goal">${conversation.goal}</div>
         </div>
         <div class="conv-meta">
-          <span class="round-indicator">Round ${conversation.currentRound}</span>
+          <round-progress conversation-id="${conversation.id}"></round-progress>
           <span class="status-badge status-${conversation.status}">${conversation.status}</span>
           <button class="settings-btn" id="settings-btn" title="Conversation Settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -428,6 +454,8 @@ export class ConversationView extends HTMLElement {
       </header>
 
       <conversation-settings-modal id="conv-settings-modal" conversation-id="${conversation.id}"></conversation-settings-modal>
+
+      <turn-queue conversation-id="${conversation.id}"></turn-queue>
 
       <agent-roster conversation-id="${conversation.id}"></agent-roster>
 
@@ -481,6 +509,12 @@ export class ConversationView extends HTMLElement {
       controlBar.addEventListener('resume', () => this.engine?.resume());
       controlBar.addEventListener('stop', () => this.engine?.stop());
       controlBar.addEventListener('reset', () => this.engine?.reset());
+      controlBar.addEventListener('speed-change', (e: Event) => {
+        const { speedMs } = (e as CustomEvent).detail || {};
+        if (typeof speedMs === 'number') {
+          void this.engine?.setSpeedMs(speedMs);
+        }
+      });
     }
 
     // Set up settings button
