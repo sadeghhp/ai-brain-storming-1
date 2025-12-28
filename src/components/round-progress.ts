@@ -3,7 +3,7 @@
 // Version: 1.0.0
 // ============================================
 
-import { agentStorage, conversationStorage } from '../storage/storage-manager';
+import { agentStorage, conversationStorage, turnStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import type { Agent, Conversation, TurnQueueState } from '../types';
@@ -14,6 +14,7 @@ export class RoundProgress extends HTMLElement {
   private agents: Agent[] = [];
   private completedTurns: number = 0;
   private currentAgentId: string | null = null;
+  private turnQueueState: TurnQueueState | null = null;
 
   static get observedAttributes() {
     return ['conversation-id'];
@@ -45,13 +46,47 @@ export class RoundProgress extends HTMLElement {
     const allAgents = await agentStorage.getByConversation(this.conversationId);
     // Filter out secretary
     this.agents = allAgents.filter(a => !a.isSecretary);
+    // Hydrate progress from persisted turns so completed conversations render correctly after reload
+    await this.hydrateProgressFromTurns();
     this.updateDisplay();
+  }
+
+  private getRelevantRoundIndex(): number {
+    const currentRound = this.conversation?.currentRound ?? 0;
+    const status = this.conversation?.status ?? 'idle';
+
+    return status === 'running' || status === 'paused'
+      ? currentRound
+      : Math.max(0, currentRound - 1);
+  }
+
+  private getDisplayRoundNumber(): number {
+    const currentRound = this.conversation?.currentRound ?? 0;
+    const status = this.conversation?.status ?? 'idle';
+
+    // When running/paused, show the in-progress round (1-based).
+    // When idle/completed, show the last completed round (also 1-based).
+    return status === 'running' || status === 'paused'
+      ? currentRound + 1
+      : Math.max(1, currentRound);
+  }
+
+  private async hydrateProgressFromTurns(): Promise<void> {
+    if (!this.conversationId || !this.conversation) return;
+
+    const roundIndex = this.getRelevantRoundIndex();
+    const turns = await turnStorage.getByRound(this.conversationId, roundIndex);
+    const completedAgentIds = new Set(
+      turns.filter(t => t.state === 'completed').map(t => t.agentId)
+    );
+    this.completedTurns = Math.min(completedAgentIds.size, this.agents.length);
   }
 
   private setupEventListeners() {
     // Turn queue updates
     eventBus.on('turn:queued', (state: TurnQueueState) => {
       if (state.conversationId === this.conversationId) {
+        this.turnQueueState = state;
         this.completedTurns = state.currentIndex;
         this.updateDisplay();
       }
@@ -59,6 +94,7 @@ export class RoundProgress extends HTMLElement {
 
     eventBus.on('turn:order-updated', (state: TurnQueueState) => {
       if (state.conversationId === this.conversationId) {
+        this.turnQueueState = state;
         this.completedTurns = state.currentIndex;
         this.updateDisplay();
       }
@@ -106,6 +142,7 @@ export class RoundProgress extends HTMLElement {
       if (id === this.conversationId) {
         this.completedTurns = 0;
         this.currentAgentId = null;
+        this.turnQueueState = null;
         this.loadData();
       }
     });
@@ -301,9 +338,15 @@ export class RoundProgress extends HTMLElement {
     const container = this.shadowRoot?.getElementById('progress-container');
     if (!container) return;
 
-    const round = this.conversation?.currentRound || 0;
-    const totalAgents = this.agents.length;
-    const completed = Math.min(this.completedTurns, totalAgents);
+    const displayRound = this.getDisplayRoundNumber();
+    const relevantRoundIndex = this.getRelevantRoundIndex();
+
+    const hasMatchingQueueState = this.turnQueueState?.round === relevantRoundIndex;
+    const totalAgents = hasMatchingQueueState ? this.turnQueueState!.totalAgents : this.agents.length;
+    const completed = Math.min(
+      hasMatchingQueueState ? this.turnQueueState!.currentIndex : this.completedTurns,
+      totalAgents
+    );
     const progressPercent = totalAgents > 0 ? (completed / totalAgents) * 100 : 0;
     const circumference = 2 * Math.PI * 12; // r=12
     const dashOffset = circumference - (progressPercent / 100) * circumference;
@@ -314,7 +357,7 @@ export class RoundProgress extends HTMLElement {
           <circle cx="12" cy="12" r="10"/>
           <polyline points="12 6 12 12 16 14"/>
         </svg>
-        Round ${round}
+        Round ${displayRound}
       </div>
 
       <div class="circular-progress">

@@ -1,21 +1,35 @@
 // ============================================
 // AI Brainstorm - Conversation Settings Modal
-// Version: 1.2.0
+// Version: 1.5.0
 // ============================================
 
-import { conversationStorage, agentStorage, providerStorage } from '../storage/storage-manager';
+import { conversationStorage, agentStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
-import type { Conversation, Agent, LLMProvider, ConversationMode, ExtendedMultiplier } from '../types';
+import { ALL_LANGUAGES, getEnabledLanguages, type Language } from '../utils/languages';
+import type { Conversation, Agent, LLMProvider, ConversationMode, ExtendedMultiplier, ConversationDepth, AppSettings } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
 import { generateAgentColor } from '../utils/helpers';
+
+// Depth level configuration for UI display
+const DEPTH_LEVELS: Array<{ id: ConversationDepth; name: string; icon: string; description: string }> = [
+  { id: 'brief', name: 'Brief', icon: '⚡', description: '1-2 sentences' },
+  { id: 'concise', name: 'Concise', icon: '📝', description: 'Short paragraphs' },
+  { id: 'standard', name: 'Standard', icon: '💬', description: 'Balanced (~150 words)' },
+  { id: 'detailed', name: 'Detailed', icon: '📖', description: 'In-depth analysis' },
+  { id: 'deep', name: 'Deep', icon: '🔬', description: 'Comprehensive' },
+];
+
 
 export class ConversationSettingsModal extends HTMLElement {
   private conversation: Conversation | null = null;
   private agents: Agent[] = [];
   private providers: LLMProvider[] = [];
   private activeTab: 'general' | 'agents' = 'general';
+  // Enabled languages from settings
+  private enabledLanguages: Language[] = getEnabledLanguages(['']);
+  private settingsUpdateHandler: ((settings: AppSettings) => void) | null = null;
 
   static get observedAttributes() {
     return ['open', 'conversation-id'];
@@ -28,6 +42,24 @@ export class ConversationSettingsModal extends HTMLElement {
 
   async connectedCallback() {
     this.render();
+    
+    // Listen for settings updates to refresh enabled languages
+    this.settingsUpdateHandler = (settings: AppSettings) => {
+      this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
+      // Re-render only if modal is open
+      if (this.getAttribute('open') === 'true') {
+        this.render();
+      }
+    };
+    eventBus.on('settings:updated', this.settingsUpdateHandler);
+  }
+  
+  disconnectedCallback() {
+    // Clean up event listener
+    if (this.settingsUpdateHandler) {
+      eventBus.off('settings:updated', this.settingsUpdateHandler);
+      this.settingsUpdateHandler = null;
+    }
   }
 
   attributeChangedCallback(name: string, _oldValue: string, newValue: string) {
@@ -53,6 +85,10 @@ export class ConversationSettingsModal extends HTMLElement {
     this.conversation = await conversationStorage.getById(conversationId) || null;
     this.agents = await agentStorage.getByConversation(conversationId);
     this.providers = await providerStorage.getAll();
+    
+    // Load enabled languages from settings
+    const settings = await settingsStorage.get();
+    this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
   }
 
   private close() {
@@ -61,6 +97,29 @@ export class ConversationSettingsModal extends HTMLElement {
 
   private isEditable(): boolean {
     return this.conversation?.status !== 'running';
+  }
+  
+  /**
+   * Get languages available for this conversation.
+   * Includes enabled languages plus the conversation's current language (if not in enabled list).
+   */
+  private getAvailableLanguagesForConversation(conv: Conversation): Language[] {
+    const currentLangCode = conv.targetLanguage || '';
+    
+    // Check if current language is in the enabled list
+    const currentInEnabled = this.enabledLanguages.some(l => l.code === currentLangCode);
+    
+    if (currentInEnabled) {
+      return this.enabledLanguages;
+    }
+    
+    // Add the current language to the list so it remains selectable
+    const currentLang = ALL_LANGUAGES.find(l => l.code === currentLangCode);
+    if (currentLang) {
+      return [...this.enabledLanguages, currentLang];
+    }
+    
+    return this.enabledLanguages;
   }
 
   private render() {
@@ -604,6 +663,68 @@ export class ConversationSettingsModal extends HTMLElement {
           opacity: 0.4;
           cursor: not-allowed;
         }
+
+        /* Depth Selector Styles */
+        .depth-selector {
+          display: flex;
+          gap: var(--space-1);
+          padding: var(--space-1);
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg);
+        }
+
+        .depth-option {
+          flex: 1;
+          padding: var(--space-2) var(--space-1);
+          background: transparent;
+          border: 1px solid transparent;
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          text-align: center;
+          transition: all var(--transition-fast);
+          min-width: 0;
+        }
+
+        .depth-option:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .depth-option.selected {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 1px var(--color-primary);
+        }
+
+        .depth-option .depth-icon {
+          font-size: var(--text-lg);
+          display: block;
+          margin-bottom: 2px;
+        }
+
+        .depth-option .depth-name {
+          font-weight: var(--font-medium);
+          font-size: var(--text-xs);
+          color: var(--color-text-primary);
+          white-space: nowrap;
+        }
+
+        .depth-option .depth-desc {
+          font-size: 9px;
+          color: var(--color-text-tertiary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .depth-live-note {
+          font-size: var(--text-xs);
+          color: var(--color-success);
+          margin-top: var(--space-1);
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+        }
       </style>
 
       <div class="modal-overlay">
@@ -693,6 +814,42 @@ export class ConversationSettingsModal extends HTMLElement {
             <div class="mode-name">Dynamic</div>
           </div>
         </div>
+      </div>
+
+      <!-- Response Depth - Can be changed while running -->
+      <div class="form-group">
+        <label class="form-label">Response Depth</label>
+        <div class="depth-selector">
+          ${DEPTH_LEVELS.map(level => `
+            <div class="depth-option ${(conv.conversationDepth ?? 'standard') === level.id ? 'selected' : ''}" 
+                 data-depth="${level.id}" 
+                 title="${level.description}">
+              <span class="depth-icon">${level.icon}</span>
+              <div class="depth-name">${level.name}</div>
+              <div class="depth-desc">${level.description}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="depth-live-note">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+          Can be changed while conversation is running
+        </div>
+      </div>
+
+      <!-- Target Language -->
+      <div class="form-group">
+        <label class="form-label">Target Language</label>
+        <select class="form-select" id="target-language" ${!editable ? 'disabled' : ''}>
+          ${this.getAvailableLanguagesForConversation(conv).map(lang => `
+            <option value="${lang.code}" ${(conv.targetLanguage || '') === lang.code ? 'selected' : ''}>
+              ${lang.name}${lang.code ? ` (${lang.nativeName})` : ''}
+            </option>
+          `).join('')}
+        </select>
+        <div class="form-hint">All agents will respond in the selected language</div>
       </div>
 
       <div class="form-row">
@@ -882,6 +1039,27 @@ export class ConversationSettingsModal extends HTMLElement {
       });
     }
 
+    // Depth selector - ALWAYS interactive (can be changed while running)
+    this.shadowRoot?.querySelectorAll('.depth-option').forEach(option => {
+      option.addEventListener('click', async () => {
+        const depth = option.getAttribute('data-depth') as ConversationDepth;
+        if (depth && this.conversation) {
+          // Update UI immediately
+          this.shadowRoot?.querySelectorAll('.depth-option').forEach(o => o.classList.remove('selected'));
+          option.classList.add('selected');
+          
+          // Save to storage immediately for real-time effect
+          await conversationStorage.update(this.conversation.id, { conversationDepth: depth });
+          
+          // Reload conversation data and emit update event
+          this.conversation = await conversationStorage.getById(this.conversation.id) || null;
+          if (this.conversation) {
+            eventBus.emit('conversation:updated', this.conversation);
+          }
+        }
+      });
+    });
+
     // Slider value displays
     const speedSlider = this.shadowRoot?.getElementById('speed') as HTMLInputElement;
     speedSlider?.addEventListener('input', () => {
@@ -1067,6 +1245,13 @@ export class ConversationSettingsModal extends HTMLElement {
     const extendedSpeakingChance = parseInt((this.shadowRoot?.getElementById('extendedChance') as HTMLInputElement)?.value || '20');
     const multiplierElement = this.shadowRoot?.querySelector('.multiplier-selector .mode-option.selected') as HTMLElement;
     const extendedMultiplier = parseInt(multiplierElement?.getAttribute('data-multiplier') || '3') as ExtendedMultiplier;
+    
+    // Get selected depth (may have been updated in real-time already, but include for completeness)
+    const depthElement = this.shadowRoot?.querySelector('.depth-option.selected') as HTMLElement;
+    const conversationDepth = (depthElement?.getAttribute('data-depth') || 'standard') as ConversationDepth;
+    
+    // Get target language
+    const targetLanguage = (this.shadowRoot?.getElementById('target-language') as HTMLSelectElement)?.value || undefined;
 
     await conversationStorage.update(this.conversation.id, {
       subject,
@@ -1078,6 +1263,8 @@ export class ConversationSettingsModal extends HTMLElement {
       defaultWordLimit,
       extendedSpeakingChance,
       extendedMultiplier,
+      conversationDepth,
+      targetLanguage,
     });
 
     eventBus.emit('conversation:updated', await conversationStorage.getById(this.conversation.id) as Conversation);

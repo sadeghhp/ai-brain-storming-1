@@ -1,10 +1,10 @@
 // ============================================
 // AI Brainstorm - Prompt Builder
-// Version: 1.2.0
+// Version: 1.4.0
 // ============================================
 
 import type { LLMMessage } from './types';
-import type { Agent, Message, Conversation, UserInterjection, Notebook } from '../types';
+import type { Agent, Message, Conversation, UserInterjection, Notebook, ConversationDepth } from '../types';
 import { countTokens, truncateMessagesToFit } from './token-counter';
 import { getStrategyById, getAgentInstructions } from '../strategies/starting-strategies';
 
@@ -12,6 +12,68 @@ import { getStrategyById, getAgentInstructions } from '../strategies/starting-st
 const DEFAULT_WORD_LIMIT = 150;
 const DEFAULT_EXTENDED_CHANCE = 20; // 20% chance
 const DEFAULT_EXTENDED_MULTIPLIER = 3;
+
+// ----- Conversation Depth Configuration -----
+
+/**
+ * Configuration for a conversation depth level
+ */
+export interface DepthConfig {
+  wordLimit: number;
+  extendedMultiplier: number;
+  extendedChance: number;
+  promptGuidance: string;
+  extendedGuidance: string;
+}
+
+/**
+ * Depth configuration presets
+ */
+const DEPTH_CONFIGS: Record<ConversationDepth, DepthConfig> = {
+  brief: {
+    wordLimit: 40,
+    extendedMultiplier: 2,
+    extendedChance: 10,
+    promptGuidance: 'RESPONSE LENGTH: Respond in 1-2 sentences only. Be extremely concise and direct. No elaboration.',
+    extendedGuidance: 'RESPONSE LENGTH: You may use 2-3 sentences this turn if needed, but stay very brief.',
+  },
+  concise: {
+    wordLimit: 85,
+    extendedMultiplier: 2,
+    extendedChance: 15,
+    promptGuidance: 'RESPONSE LENGTH: Keep your response to a short paragraph (~85 words). Focus on your key point only.',
+    extendedGuidance: 'RESPONSE LENGTH: You may expand slightly this turn (~150 words), but remain focused.',
+  },
+  standard: {
+    wordLimit: 150,
+    extendedMultiplier: 3,
+    extendedChance: 20,
+    promptGuidance: 'RESPONSE LENGTH: Keep your response concise, around 150 words. Be focused and substantive.',
+    extendedGuidance: 'RESPONSE LENGTH: You may elaborate more this turn (~400 words). Develop your ideas fully.',
+  },
+  detailed: {
+    wordLimit: 300,
+    extendedMultiplier: 2,
+    extendedChance: 25,
+    promptGuidance: 'RESPONSE LENGTH: Provide a detailed response (~300 words). Include reasoning and examples.',
+    extendedGuidance: 'RESPONSE LENGTH: Take your time this turn (~600 words). Provide comprehensive analysis with examples.',
+  },
+  deep: {
+    wordLimit: 500,
+    extendedMultiplier: 2,
+    extendedChance: 30,
+    promptGuidance: 'RESPONSE LENGTH: Provide comprehensive analysis (~500 words). Explore all angles, give detailed reasoning.',
+    extendedGuidance: 'RESPONSE LENGTH: This is your turn to go deep (~1000 words). Exhaustive exploration is encouraged.',
+  },
+};
+
+/**
+ * Get depth configuration for a conversation
+ * Falls back to 'standard' if no depth is set
+ */
+export function getDepthConfig(depth?: ConversationDepth): DepthConfig {
+  return DEPTH_CONFIGS[depth ?? 'standard'];
+}
 
 /**
  * Result of word limit calculation for a turn
@@ -35,6 +97,7 @@ interface PromptContext {
 
 /**
  * Calculate the effective word limit for an agent's turn
+ * Uses conversationDepth when set, otherwise falls back to legacy settings
  * First turn always gets extended limit, otherwise random chance
  */
 export function calculateWordLimit(
@@ -42,9 +105,24 @@ export function calculateWordLimit(
   agent: Agent,
   isFirstTurn: boolean
 ): WordLimitResult {
-  // Get base limit from agent override or conversation default
-  const baseLimit = agent.wordLimit ?? conversation.defaultWordLimit ?? DEFAULT_WORD_LIMIT;
-  const multiplier = conversation.extendedMultiplier ?? DEFAULT_EXTENDED_MULTIPLIER;
+  // Get depth config if conversationDepth is set
+  const depthConfig = conversation.conversationDepth 
+    ? getDepthConfig(conversation.conversationDepth) 
+    : null;
+  
+  // Get base limit: agent override > depth config > conversation default > global default
+  const baseLimit = agent.wordLimit 
+    ?? (depthConfig?.wordLimit) 
+    ?? conversation.defaultWordLimit 
+    ?? DEFAULT_WORD_LIMIT;
+  
+  // Get multiplier and chance from depth config or conversation settings
+  const multiplier = depthConfig?.extendedMultiplier 
+    ?? conversation.extendedMultiplier 
+    ?? DEFAULT_EXTENDED_MULTIPLIER;
+  const chance = depthConfig?.extendedChance 
+    ?? conversation.extendedSpeakingChance 
+    ?? DEFAULT_EXTENDED_CHANCE;
   
   // First speaker always gets extended limit to properly set up the discussion
   if (isFirstTurn) {
@@ -56,7 +134,6 @@ export function calculateWordLimit(
   }
   
   // Random chance for extended speaking
-  const chance = conversation.extendedSpeakingChance ?? DEFAULT_EXTENDED_CHANCE;
   const roll = Math.random() * 100;
   
   if (roll < chance) {
@@ -76,12 +153,29 @@ export function calculateWordLimit(
 
 /**
  * Build word limit instruction for the prompt
+ * Uses depth-specific guidance when conversationDepth is set
  */
-function buildWordLimitInstruction(wordLimit: WordLimitResult, thinkingDepth: number): string {
+function buildWordLimitInstruction(
+  wordLimit: WordLimitResult, 
+  thinkingDepth: number, 
+  conversationDepth?: ConversationDepth
+): string {
+  // Get depth config for specialized prompts
+  const depthConfig = conversationDepth ? getDepthConfig(conversationDepth) : null;
+  
   // Adjust limit slightly based on thinking depth (deeper thinkers get 10-20% bonus)
   const depthBonus = Math.floor(wordLimit.limit * (thinkingDepth - 1) * 0.05);
   const adjustedLimit = wordLimit.limit + depthBonus;
   
+  // Use depth-specific guidance if available
+  if (depthConfig) {
+    if (wordLimit.isExtended) {
+      return `\n${depthConfig.extendedGuidance}`;
+    }
+    return `\n${depthConfig.promptGuidance}`;
+  }
+  
+  // Fallback to generic instructions (for backward compatibility)
   if (wordLimit.isExtended) {
     return `\nRESPONSE LENGTH: You may elaborate more this turn. Aim for around ${adjustedLimit} words, but prioritize quality over hitting the exact count. This is a good opportunity to develop your ideas more fully.`;
   }
@@ -143,6 +237,14 @@ IMPORTANT: Respond in plain text only. Do NOT use:
 - Code blocks
 - Bullet points or numbered lists
 Keep your response as natural prose.`);
+  }
+
+  // Target language requirement
+  if (conversation.targetLanguage) {
+    parts.push(`
+LANGUAGE REQUIREMENT: You MUST respond entirely in ${conversation.targetLanguage}.
+All your responses, explanations, and contributions must be written in ${conversation.targetLanguage}.
+Do not use any other language unless specifically quoting or referencing terms that have no equivalent.`);
   }
 
   // Interaction guidelines
@@ -210,7 +312,11 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
   
   // Add word limit instruction (skip for secretary as they have different requirements)
   if (!context.agent.isSecretary) {
-    systemPrompt += buildWordLimitInstruction(wordLimit, context.agent.thinkingDepth);
+    systemPrompt += buildWordLimitInstruction(
+      wordLimit, 
+      context.agent.thinkingDepth,
+      context.conversation.conversationDepth
+    );
   }
 
   // System prompt
@@ -395,8 +501,12 @@ function truncateNotebook(notes: string, usagePercent: number, maxTokens: number
 /**
  * Build a summary prompt for the secretary
  */
-export function buildSummaryPrompt(messages: Message[], agents: Agent[]): LLMMessage[] {
-  const systemPrompt = `You are a skilled summarizer. Your task is to extract the key points, decisions, and insights from a discussion. Be concise and objective.`;
+export function buildSummaryPrompt(messages: Message[], agents: Agent[], targetLanguage?: string): LLMMessage[] {
+  let systemPrompt = `You are a skilled summarizer. Your task is to extract the key points, decisions, and insights from a discussion. Be concise and objective.`;
+  
+  if (targetLanguage) {
+    systemPrompt += `\n\nIMPORTANT: Write your summary entirely in ${targetLanguage}.`;
+  }
 
   const conversationText = messages.map(m => {
     const sender = agents.find(a => a.id === m.agentId);

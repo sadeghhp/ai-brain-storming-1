@@ -1,10 +1,11 @@
 // ============================================
 // AI Brainstorm - Conversation View Component
-// Version: 2.1.0
+// Version: 2.2.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
 import { eventBus } from '../utils/event-bus';
+import { downloadConversation } from '../utils/export';
 import './message-stream';
 import './agent-roster';
 import './control-bar';
@@ -18,6 +19,8 @@ import './round-progress';
 export class ConversationView extends HTMLElement {
   private engine: ConversationEngine | null = null;
   private conversationId: string | null = null;
+  private onExportDocumentClick: ((e: MouseEvent) => void) | null = null;
+  private onExportDocumentKeydown: ((e: KeyboardEvent) => void) | null = null;
 
   static get observedAttributes() {
     return ['conversation-id'];
@@ -42,7 +45,15 @@ export class ConversationView extends HTMLElement {
   }
 
   disconnectedCallback() {
-    // Cleanup
+    // Cleanup document-level listeners to prevent leaks across re-renders / navigation
+    if (this.onExportDocumentClick) {
+      document.removeEventListener('click', this.onExportDocumentClick);
+      this.onExportDocumentClick = null;
+    }
+    if (this.onExportDocumentKeydown) {
+      document.removeEventListener('keydown', this.onExportDocumentKeydown);
+      this.onExportDocumentKeydown = null;
+    }
   }
 
   private async loadConversation() {
@@ -108,6 +119,16 @@ export class ConversationView extends HTMLElement {
       // Update host data attribute for conditional styling
       this.setAttribute('data-status', status);
     }
+  }
+
+  private async emitInitialTurnQueueState(conversationId: string): Promise<void> {
+    if (!this.engine) return;
+    const state = await this.engine.getTurnQueueState();
+    if (!state) return;
+
+    // Guard against races when switching conversations quickly
+    if (state.conversationId !== conversationId) return;
+    eventBus.emit('turn:order-updated', state);
   }
 
   private render() {
@@ -253,6 +274,16 @@ export class ConversationView extends HTMLElement {
 
     const conversation = this.engine.getConversation();
 
+    // If we previously registered document listeners (from a prior render), remove them first.
+    if (this.onExportDocumentClick) {
+      document.removeEventListener('click', this.onExportDocumentClick);
+      this.onExportDocumentClick = null;
+    }
+    if (this.onExportDocumentKeydown) {
+      document.removeEventListener('keydown', this.onExportDocumentKeydown);
+      this.onExportDocumentKeydown = null;
+    }
+
     this.shadowRoot.innerHTML = `
       <style>
         :host {
@@ -291,7 +322,7 @@ export class ConversationView extends HTMLElement {
         .conv-meta {
           display: flex;
           align-items: center;
-          gap: var(--space-4);
+          gap: var(--space-3);
         }
 
         .status-badge {
@@ -402,7 +433,7 @@ export class ConversationView extends HTMLElement {
           color: var(--color-text-tertiary);
         }
 
-        .settings-btn {
+        .header-btn {
           padding: var(--space-2);
           background: transparent;
           border: 1px solid var(--color-border);
@@ -415,15 +446,93 @@ export class ConversationView extends HTMLElement {
           justify-content: center;
         }
 
-        .settings-btn:hover {
+        .header-btn:hover {
           background: var(--color-surface);
           border-color: var(--color-border-strong);
           color: var(--color-text-primary);
         }
 
-        .settings-btn svg {
+        .header-btn svg {
           width: 18px;
           height: 18px;
+        }
+
+        /* Export dropdown */
+        .export-wrapper {
+          position: relative;
+        }
+
+        .export-dropdown {
+          position: absolute;
+          top: calc(100% + var(--space-2));
+          right: 0;
+          min-width: 160px;
+          background: var(--color-bg-secondary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+          z-index: 100;
+          opacity: 0;
+          visibility: hidden;
+          transform: translateY(-8px);
+          transition: all var(--transition-fast);
+        }
+
+        .export-dropdown.open {
+          opacity: 1;
+          visibility: visible;
+          transform: translateY(0);
+        }
+
+        .export-dropdown-header {
+          padding: var(--space-2) var(--space-3);
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          color: var(--color-text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          border-bottom: 1px solid var(--color-border);
+        }
+
+        .export-option {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          width: 100%;
+          padding: var(--space-2) var(--space-3);
+          background: transparent;
+          border: none;
+          color: var(--color-text-secondary);
+          font-size: var(--text-sm);
+          text-align: left;
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .export-option:hover {
+          background: var(--color-surface);
+          color: var(--color-text-primary);
+        }
+
+        .export-option:first-of-type {
+          border-radius: var(--radius-md) var(--radius-md) 0 0;
+        }
+
+        .export-option:last-child {
+          border-radius: 0 0 var(--radius-md) var(--radius-md);
+        }
+
+        .export-option svg {
+          width: 16px;
+          height: 16px;
+          opacity: 0.7;
+        }
+
+        .export-option .ext {
+          margin-left: auto;
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          font-family: var(--font-mono);
         }
 
         /* Turn queue visibility based on status */
@@ -444,7 +553,51 @@ export class ConversationView extends HTMLElement {
         <div class="conv-meta">
           <round-progress conversation-id="${conversation.id}"></round-progress>
           <span class="status-badge status-${conversation.status}">${conversation.status}</span>
-          <button class="settings-btn" id="settings-btn" title="Conversation Settings">
+          <div class="export-wrapper">
+            <button class="header-btn" id="export-btn" title="Export Conversation" aria-haspopup="menu" aria-expanded="false" aria-controls="export-dropdown">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </button>
+            <div class="export-dropdown" id="export-dropdown" role="menu" aria-label="Export conversation">
+              <div class="export-dropdown-header">Export as</div>
+              <button class="export-option" data-format="text">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                Plain Text
+                <span class="ext">.txt</span>
+              </button>
+              <button class="export-option" data-format="markdown">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <path d="M9 15l2-2 2 2"/>
+                  <path d="M9 11h6"/>
+                </svg>
+                Markdown
+                <span class="ext">.md</span>
+              </button>
+              <button class="export-option" data-format="json">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <path d="M8 13h2"/>
+                  <path d="M8 17h2"/>
+                  <path d="M14 13h2"/>
+                  <path d="M14 17h2"/>
+                </svg>
+                JSON Data
+                <span class="ext">.json</span>
+              </button>
+            </div>
+          </div>
+          <button class="header-btn" id="settings-btn" title="Conversation Settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/>
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -501,6 +654,10 @@ export class ConversationView extends HTMLElement {
       </div>
     `;
 
+    // Ensure host status-dependent styles are correct immediately on render
+    this.setAttribute('data-status', conversation.status);
+    void this.emitInitialTurnQueueState(conversation.id);
+
     // Set up control bar callbacks
     const controlBar = this.shadowRoot.querySelector('control-bar');
     if (controlBar) {
@@ -523,6 +680,57 @@ export class ConversationView extends HTMLElement {
       const settingsModal = this.shadowRoot?.getElementById('conv-settings-modal') as HTMLElement;
       settingsModal?.setAttribute('open', 'true');
     });
+
+    // Set up export button and dropdown
+    const exportBtn = this.shadowRoot.getElementById('export-btn');
+    const exportDropdown = this.shadowRoot.getElementById('export-dropdown');
+    
+    exportBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportDropdown?.classList.toggle('open');
+      const isOpen = exportDropdown?.classList.contains('open') ?? false;
+      exportBtn.setAttribute('aria-expanded', String(isOpen));
+    });
+
+    // Handle export format selection
+    this.shadowRoot.querySelectorAll('.export-option').forEach(option => {
+      option.addEventListener('click', async (e) => {
+        const target = e.currentTarget as HTMLElement;
+        const format = target.dataset.format as 'text' | 'markdown' | 'json';
+        
+        if (format && this.conversationId) {
+          try {
+            await downloadConversation(this.conversationId, format);
+          } catch (error) {
+            console.error('Export failed:', error);
+            eventBus.emit('error', { message: 'Failed to export conversation' });
+          }
+        }
+        
+        exportDropdown?.classList.remove('open');
+        exportBtn?.setAttribute('aria-expanded', 'false');
+      });
+    });
+
+    // Close dropdown when clicking outside
+    this.onExportDocumentClick = (e: MouseEvent) => {
+      if (!exportBtn?.contains(e.target as Node) && !exportDropdown?.contains(e.target as Node)) {
+        exportDropdown?.classList.remove('open');
+        exportBtn?.setAttribute('aria-expanded', 'false');
+      }
+    };
+    
+    document.addEventListener('click', this.onExportDocumentClick);
+    
+    // Close dropdown on Escape key
+    this.onExportDocumentKeydown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        exportDropdown?.classList.remove('open');
+        exportBtn?.setAttribute('aria-expanded', 'false');
+      }
+    };
+    
+    document.addEventListener('keydown', this.onExportDocumentKeydown);
 
     // Set up panel tab switching
     this.shadowRoot.querySelectorAll('.panel-tab').forEach(tab => {

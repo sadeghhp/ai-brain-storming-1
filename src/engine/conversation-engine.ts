@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.4.0
+// Version: 2.7.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -11,11 +11,11 @@ import { TurnExecutor, TurnResult } from './turn-executor';
 import { ResultManager } from './result-manager';
 import { UserInterjectionHandler } from './user-interjection';
 import { ConversationStateMachine } from './state-machine';
-import { conversationStorage, turnStorage, messageStorage, notebookStorage } from '../storage/storage-manager';
+import { conversationStorage, turnStorage, messageStorage, notebookStorage, interjectionStorage, reactionStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
 import { selectFirstSpeaker, getStrategyById } from '../strategies/starting-strategies';
-import type { Conversation, Turn, Message, ConversationStatus, ConversationMode, StartingStrategyId, TurnQueueState, TurnQueueItem } from '../types';
+import type { Conversation, Turn, Message, ConversationStatus, ConversationMode, StartingStrategyId, ConversationDepth, TurnQueueState, TurnQueueItem } from '../types';
 
 export interface ConversationEngineOptions {
   onAgentThinking?: (agentId: string) => void;
@@ -155,23 +155,34 @@ export class ConversationEngine {
     this.turnExecutor?.abort();
     this.stateMachine.reset();
 
+    // Delete reactions tied to this conversation's messages (prevents orphaned reactions)
+    const existingMessages = await messageStorage.getByConversation(this.conversation.id);
+    await reactionStorage.deleteByMessageIds(existingMessages.map(m => m.id));
+
     // Delete all turns (not just mark as cancelled)
     await turnStorage.deleteByConversation(this.conversation.id);
 
     // Delete all messages
     await messageStorage.deleteByConversation(this.conversation.id);
 
+    // Delete user interjections for this conversation
+    await interjectionStorage.deleteByConversation(this.conversation.id);
+
     // Clear all agent notebooks
     await notebookStorage.clearAllForConversation(this.conversation.id);
 
-    // Reset conversation state
+    // Reset conversation state (including dynamic round decision)
     await conversationStorage.update(this.conversation.id, {
       status: 'idle',
       currentRound: 0,
+      recommendedRounds: undefined,
+      roundDecisionReasoning: undefined,
     });
 
     this.conversation.status = 'idle';
     this.conversation.currentRound = 0;
+    this.conversation.recommendedRounds = undefined;
+    this.conversation.roundDecisionReasoning = undefined;
 
     // Reset tracking state
     this.completedAgentsInRound.clear();
@@ -184,6 +195,7 @@ export class ConversationEngine {
     this.turnManager?.setCurrentRound(0);
 
     console.log(`[Engine] Conversation ${this.conversation.id} reset - all data cleared`);
+    eventBus.emit('conversation:updated', this.conversation);
     eventBus.emit('conversation:reset', this.conversation.id);
   }
 
@@ -235,12 +247,12 @@ export class ConversationEngine {
    * Main run loop
    */
   private async runLoop(): Promise<void> {
-    const maxRounds = this.conversation.maxRounds || Infinity;
-
     while (this.stateMachine.isRunning()) {
-      // Check round limit
-      if (this.conversation.currentRound >= maxRounds) {
-        await this.stop();
+      // Check round limit - use recommendedRounds if set, otherwise maxRounds
+      const effectiveMaxRounds = this.conversation.recommendedRounds || this.conversation.maxRounds || Infinity;
+      if (this.conversation.currentRound >= effectiveMaxRounds) {
+        // Final round reached - this will be handled by onRoundComplete
+        // which generates the final result and stops the conversation
         break;
       }
 
@@ -391,7 +403,9 @@ export class ConversationEngine {
           const summaryMessage = await messageStorage.create({
             conversationId: this.conversation.id,
             agentId: this.secretary.id,
-            content: `**Round ${round} Summary:**\n\n${roundSummary}`,
+            // Store the secretary summary as-is to avoid hardcoded English headers
+            // when the conversation has a target language.
+            content: roundSummary,
             round: round,
             type: 'summary',
           });
@@ -399,9 +413,24 @@ export class ConversationEngine {
           eventBus.emit('message:created', summaryMessage);
           console.log(`[Engine] Secretary generated round ${round} summary`);
         }
+
+        // After round 1 completes, secretary analyzes and decides total rounds
+        // Only do this if maxRounds hasn't been set yet (or was not user-defined)
+        // NOTE: In this codebase, the first agent round is round 0.
+        if (round === 0 && !this.conversation.recommendedRounds) {
+          await this.decideRoundsAfterFirstRound(round);
+        }
       } catch (error) {
         console.warn('[Engine] Secretary round summary failed:', error);
       }
+    }
+
+    // Check if this is the final round - if so, generate comprehensive result
+    const effectiveMaxRounds = this.conversation.recommendedRounds || this.conversation.maxRounds;
+    if (effectiveMaxRounds && this.conversation.currentRound >= effectiveMaxRounds) {
+      console.log(`[Engine] Reached final round (${effectiveMaxRounds}), generating comprehensive result...`);
+      await this.generateFinalResult();
+      return; // Stop processing, conversation will be completed
     }
 
     // Update result draft incrementally
@@ -411,6 +440,84 @@ export class ConversationEngine {
     await this.interjectionHandler.markAllProcessed();
 
     this.options.onRoundComplete?.(round);
+  }
+
+  /**
+   * Secretary analyzes round 1 and decides total rounds needed
+   */
+  private async decideRoundsAfterFirstRound(completedRound: number): Promise<void> {
+    if (!this.secretary) return;
+
+    try {
+      const decision = await this.secretary.analyzeAndDecideRounds(this.conversation, completedRound);
+      
+      // Update conversation with recommended rounds
+      this.conversation.recommendedRounds = decision.recommendedRounds;
+      this.conversation.roundDecisionReasoning = decision.reasoning;
+      this.conversation.maxRounds = decision.recommendedRounds;
+      
+      await conversationStorage.update(this.conversation.id, {
+        recommendedRounds: decision.recommendedRounds,
+        roundDecisionReasoning: decision.reasoning,
+        maxRounds: decision.recommendedRounds,
+      });
+
+      // Emit event for UI notification
+      eventBus.emit('conversation:rounds-decided', {
+        conversationId: this.conversation.id,
+        recommendedRounds: decision.recommendedRounds,
+        reasoning: decision.reasoning,
+      });
+
+      // Create a system message to announce the decision
+      const decisionMessage = await messageStorage.create({
+        conversationId: this.conversation.id,
+        agentId: this.secretary.id,
+        // Keep this message language-neutral to avoid injecting English when targetLanguage is set.
+        // The secretary already writes the reasoning in targetLanguage when configured.
+        content: `Total rounds: ${decision.recommendedRounds}\nReasoning: ${decision.reasoning}`,
+        round: completedRound,
+        type: 'system',
+      });
+
+      eventBus.emit('message:created', decisionMessage);
+      console.log(`[Engine] Secretary decided ${decision.recommendedRounds} rounds: ${decision.reasoning}`);
+    } catch (error) {
+      console.error('[Engine] Failed to decide rounds:', error);
+      // Fallback to default 5 rounds if decision fails
+      this.conversation.recommendedRounds = 5;
+      this.conversation.maxRounds = 5;
+      await conversationStorage.update(this.conversation.id, {
+        recommendedRounds: 5,
+        maxRounds: 5,
+      });
+    }
+  }
+
+  /**
+   * Generate final comprehensive result and complete conversation
+   */
+  private async generateFinalResult(): Promise<void> {
+    if (this.secretary) {
+      try {
+        // Generate comprehensive final result using secretary
+        await this.secretary.generateFinalComprehensiveResult(this.conversation);
+        console.log('[Engine] Secretary generated final comprehensive result');
+      } catch (error) {
+        console.error('[Engine] Failed to generate final result:', error);
+        // Fallback to regular final draft
+        await this.resultManager.generateFinalDraft(this.conversation);
+      }
+    } else {
+      // No secretary, use regular final draft
+      await this.resultManager.generateFinalDraft(this.conversation);
+    }
+
+    // Complete the conversation
+    if (this.stateMachine.transition('completed')) {
+      await this.updateConversationStatus('completed');
+      eventBus.emit('conversation:stopped', this.conversation.id);
+    }
   }
 
   /**
@@ -488,22 +595,53 @@ export class ConversationEngine {
   /**
    * Get current turn queue state (for initial load)
    */
-  getTurnQueueState(): TurnQueueState | null {
+  async getTurnQueueState(): Promise<TurnQueueState | null> {
     const nonSecretaryAgents = this.agents.filter(a => !a.entityData.isSecretary);
     if (nonSecretaryAgents.length === 0) return null;
 
-    const queue: TurnQueueItem[] = nonSecretaryAgents.map((agent, index) => ({
-      agentId: agent.id,
-      agentName: agent.entityData.name,
-      agentColor: agent.entityData.color,
-      status: 'waiting' as const,
-      order: index,
-    }));
+    // For display, we treat "running/paused" as being inside the current round,
+    // and "idle/completed" as showing the last completed round (if any).
+    const status = this.conversation.status;
+    const displayRound =
+      status === 'running' || status === 'paused'
+        ? this.conversation.currentRound
+        : Math.max(0, this.conversation.currentRound - 1);
+
+    const turnsInRound = await turnStorage.getByRound(this.conversation.id, displayRound);
+    const completedAgentIds = new Set(
+      turnsInRound.filter(t => t.state === 'completed').map(t => t.agentId)
+    );
+
+    // If a turn is currently running, highlight that agent as "current"
+    const runningTurn = turnsInRound
+      .filter(t => t.state === 'running')
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+    const runningAgentId = runningTurn?.agentId ?? null;
+
+    const queue: TurnQueueItem[] = nonSecretaryAgents.map((agent, index) => {
+      let itemStatus: 'completed' | 'current' | 'waiting';
+
+      if (completedAgentIds.has(agent.id)) {
+        itemStatus = 'completed';
+      } else if (runningAgentId && runningAgentId === agent.id) {
+        itemStatus = 'current';
+      } else {
+        itemStatus = 'waiting';
+      }
+
+      return {
+        agentId: agent.id,
+        agentName: agent.entityData.name,
+        agentColor: agent.entityData.color,
+        status: itemStatus,
+        order: index,
+      };
+    });
 
     return {
       conversationId: this.conversation.id,
-      round: this.conversation.currentRound,
-      currentIndex: 0,
+      round: displayRound,
+      currentIndex: Math.min(completedAgentIds.size, nonSecretaryAgents.length),
       totalAgents: nonSecretaryAgents.length,
       queue,
     };
@@ -542,6 +680,10 @@ export class ConversationEngine {
       defaultWordLimit?: number;
       extendedSpeakingChance?: number;
       extendedMultiplier?: 3 | 5;
+      // Conversation depth (controls response verbosity)
+      conversationDepth?: ConversationDepth;
+      // Target language for agent responses
+      targetLanguage?: string;
     } = {}
   ): Promise<ConversationEngine> {
     // Create conversation with strategy config and word limits
@@ -560,6 +702,10 @@ export class ConversationEngine {
       defaultWordLimit: options.defaultWordLimit ?? 150,
       extendedSpeakingChance: options.extendedSpeakingChance ?? 20,
       extendedMultiplier: options.extendedMultiplier ?? 3,
+      // Conversation depth (defaults to 'standard' if not set)
+      conversationDepth: options.conversationDepth,
+      // Target language for agent responses
+      targetLanguage: options.targetLanguage,
     });
 
     // Create agents

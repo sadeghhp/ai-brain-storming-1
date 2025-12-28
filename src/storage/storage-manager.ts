@@ -637,6 +637,10 @@ export const interjectionStorage = {
   async getByConversation(conversationId: string): Promise<UserInterjection[]> {
     return db.userInterjections.where('conversationId').equals(conversationId).sortBy('createdAt');
   },
+
+  async deleteByConversation(conversationId: string): Promise<number> {
+    return db.userInterjections.where('conversationId').equals(conversationId).delete();
+  },
 };
 
 // ============================================
@@ -656,7 +660,12 @@ export const settingsStorage = {
         defaultPlainTextOnly: false,
         showKeyboardShortcuts: true,
         autoScrollMessages: true,
+        enabledLanguages: [''], // Default: English only (empty string = English)
       };
+    }
+    // Ensure enabledLanguages exists for older stored settings
+    if (!settings.enabledLanguages) {
+      settings.enabledLanguages = [''];
     }
     return settings;
   },
@@ -681,6 +690,18 @@ export const reactionStorage = {
   async getTotalWeight(messageId: string): Promise<number> {
     const reactions = await this.getByMessage(messageId);
     return reactions.reduce((sum, r) => sum + r.delta, 0);
+  },
+
+  async deleteByMessageIds(messageIds: string[]): Promise<number> {
+    if (messageIds.length === 0) return 0;
+
+    let deleted = 0;
+    await db.transaction('rw', [db.userReactions], async () => {
+      for (const messageId of messageIds) {
+        deleted += await db.userReactions.where('messageId').equals(messageId).delete();
+      }
+    });
+    return deleted;
   },
 };
 

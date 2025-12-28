@@ -1,19 +1,30 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.4.0
+// Version: 2.7.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
-import { presetStorage, providerStorage } from '../storage/storage-manager';
+import { presetStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
 import { presetCategories } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { startingStrategies, getStrategyById, buildOpeningStatement, buildGroundRules } from '../strategies/starting-strategies';
 import { conversationTemplates, templateCategories, getTemplateById } from '../strategies/conversation-templates';
-import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId } from '../types';
+import { ALL_LANGUAGES, getEnabledLanguages, type Language } from '../utils/languages';
+import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId, ConversationDepth, AppSettings } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
+
+// Depth level configuration for UI display
+const DEPTH_LEVELS: Array<{ id: ConversationDepth; name: string; icon: string; description: string }> = [
+  { id: 'brief', name: 'Brief', icon: '⚡', description: '1-2 sentences' },
+  { id: 'concise', name: 'Concise', icon: '📝', description: 'Short paragraphs' },
+  { id: 'standard', name: 'Standard', icon: '💬', description: 'Balanced (~150 words)' },
+  { id: 'detailed', name: 'Detailed', icon: '📖', description: 'In-depth analysis' },
+  { id: 'deep', name: 'Deep', icon: '🔬', description: 'Comprehensive' },
+];
+
 
 interface CustomAgent {
   id: string;
@@ -48,6 +59,13 @@ export class NewConversationModal extends HTMLElement {
   private selectedTemplateId: string | null = null;
   private customOpeningStatement: string = '';
   private showOpeningStatementField: boolean = false;
+  // Conversation depth state
+  private selectedDepth: ConversationDepth = 'standard';
+  // Target language state
+  private selectedLanguage: string = '';
+  // Enabled languages from settings
+  private enabledLanguages: Language[] = getEnabledLanguages(['']);
+  private settingsUpdateHandler: ((settings: AppSettings) => void) | null = null;
 
   static get observedAttributes() {
     return ['open'];
@@ -61,6 +79,24 @@ export class NewConversationModal extends HTMLElement {
   async connectedCallback() {
     await this.loadData();
     this.render();
+    
+    // Listen for settings updates to refresh enabled languages
+    this.settingsUpdateHandler = (settings: AppSettings) => {
+      this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
+      // Re-render only if modal is open
+      if (this.getAttribute('open') === 'true') {
+        this.render();
+      }
+    };
+    eventBus.on('settings:updated', this.settingsUpdateHandler);
+  }
+  
+  disconnectedCallback() {
+    // Clean up event listener
+    if (this.settingsUpdateHandler) {
+      eventBus.off('settings:updated', this.settingsUpdateHandler);
+      this.settingsUpdateHandler = null;
+    }
   }
 
   attributeChangedCallback(name: string, _oldValue: string, newValue: string) {
@@ -75,6 +111,10 @@ export class NewConversationModal extends HTMLElement {
   private async loadData() {
     this.presets = await presetStorage.getAll();
     this.providers = await providerStorage.getAll();
+    
+    // Load enabled languages from settings
+    const settings = await settingsStorage.get();
+    this.enabledLanguages = getEnabledLanguages(settings.enabledLanguages);
     
     // Auto-fetch models for active providers that have none
     await this.autoFetchModelsIfNeeded();
@@ -160,6 +200,10 @@ export class NewConversationModal extends HTMLElement {
     this.selectedTemplateId = null;
     this.customOpeningStatement = '';
     this.showOpeningStatementField = false;
+    // Reset depth state
+    this.selectedDepth = 'standard';
+    // Reset language state
+    this.selectedLanguage = '';
   }
 
   private generateAgentId(): string {
@@ -987,6 +1031,65 @@ export class NewConversationModal extends HTMLElement {
           color: var(--color-text-tertiary);
           margin-top: var(--space-1);
         }
+
+        /* Depth Selector Styles */
+        .depth-selector {
+          display: flex;
+          gap: var(--space-1);
+          padding: var(--space-1);
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg);
+        }
+
+        .depth-option {
+          flex: 1;
+          padding: var(--space-2) var(--space-1);
+          background: transparent;
+          border: 1px solid transparent;
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          text-align: center;
+          transition: all var(--transition-fast);
+          min-width: 0;
+        }
+
+        .depth-option:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .depth-option.selected {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 1px var(--color-primary);
+        }
+
+        .depth-option .depth-icon {
+          font-size: var(--text-lg);
+          display: block;
+          margin-bottom: 2px;
+        }
+
+        .depth-option .depth-name {
+          font-weight: var(--font-medium);
+          font-size: var(--text-xs);
+          color: var(--color-text-primary);
+          white-space: nowrap;
+        }
+
+        .depth-option .depth-desc {
+          font-size: 9px;
+          color: var(--color-text-tertiary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        @media (max-width: 560px) {
+          .depth-option .depth-desc {
+            display: none;
+          }
+        }
       </style>
 
       <div class="modal-overlay">
@@ -1095,6 +1198,37 @@ export class NewConversationModal extends HTMLElement {
                     <div class="mode-icon">💬</div>
                     <div class="mode-name">Dynamic</div>
                   </div>
+                </div>
+              </div>
+
+              <!-- Conversation Depth -->
+              <div class="form-group">
+                <label class="form-label">Response Depth</label>
+                <div class="depth-selector">
+                  ${DEPTH_LEVELS.map(level => `
+                    <div class="depth-option ${this.selectedDepth === level.id ? 'selected' : ''}" 
+                         data-depth="${level.id}" 
+                         title="${level.description}">
+                      <span class="depth-icon">${level.icon}</span>
+                      <div class="depth-name">${level.name}</div>
+                      <div class="depth-desc">${level.description}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+
+              <!-- Target Language -->
+              <div class="form-group">
+                <label class="form-label">Target Language</label>
+                <select class="form-select" id="target-language">
+                  ${this.enabledLanguages.map(lang => `
+                    <option value="${lang.code}" ${this.selectedLanguage === lang.code ? 'selected' : ''}>
+                      ${lang.name}${lang.code ? ` (${lang.nativeName})` : ''}
+                    </option>
+                  `).join('')}
+                </select>
+                <div class="form-hint" style="margin-top: var(--space-1); font-size: var(--text-xs); color: var(--color-text-tertiary);">
+                  All agents will respond in the selected language
                 </div>
               </div>
 
@@ -1357,6 +1491,24 @@ export class NewConversationModal extends HTMLElement {
         this.shadowRoot?.querySelectorAll('.mode-option').forEach(o => o.classList.remove('selected'));
         option.classList.add('selected');
       });
+    });
+
+    // Depth selector
+    this.shadowRoot?.querySelectorAll('.depth-option').forEach(option => {
+      option.addEventListener('click', () => {
+        const depth = option.getAttribute('data-depth') as ConversationDepth;
+        if (depth) {
+          this.selectedDepth = depth;
+          this.shadowRoot?.querySelectorAll('.depth-option').forEach(o => o.classList.remove('selected'));
+          option.classList.add('selected');
+        }
+      });
+    });
+
+    // Language selector
+    const languageSelect = this.shadowRoot?.getElementById('target-language') as HTMLSelectElement | null;
+    languageSelect?.addEventListener('change', () => {
+      this.selectedLanguage = languageSelect.value;
     });
 
     // Strategy selector
@@ -1858,6 +2010,8 @@ export class NewConversationModal extends HTMLElement {
           startingStrategy: this.selectedStrategyId,
           openingStatement,
           groundRules,
+          conversationDepth: this.selectedDepth,
+          targetLanguage: this.selectedLanguage || undefined,
         }
       );
 

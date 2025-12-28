@@ -1,12 +1,13 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.2.0
+// Version: 1.5.0
 // ============================================
 
 // ----- Enums -----
 
 export type ConversationMode = 'round-robin' | 'moderator' | 'dynamic';
 export type ConversationStatus = 'idle' | 'running' | 'paused' | 'completed';
+export type ConversationDepth = 'brief' | 'concise' | 'standard' | 'detailed' | 'deep';
 export type TurnState = 'planned' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type MessageType = 'response' | 'summary' | 'interjection' | 'system' | 'opening';
 export type ApiFormat = 'openai' | 'anthropic' | 'ollama';
@@ -39,6 +40,9 @@ export interface Conversation {
   plainTextOnly: boolean;
   currentRound: number;
   maxRounds?: number;
+  // Dynamic round management (set by secretary after round 1)
+  recommendedRounds?: number;           // Secretary's recommended total rounds
+  roundDecisionReasoning?: string;      // Secretary's reasoning for the round decision
   // Starting strategy configuration
   startingStrategy?: StartingStrategyId;
   openingStatement?: string;
@@ -47,6 +51,10 @@ export interface Conversation {
   defaultWordLimit?: number;          // Default word limit for agents (e.g., 150)
   extendedSpeakingChance?: number;    // Percentage chance for extended turn (0-50)
   extendedMultiplier?: ExtendedMultiplier; // Multiplier when extended (3x or 5x)
+  // Conversation depth - controls response verbosity (can be changed while running)
+  conversationDepth?: ConversationDepth; // Default: 'standard'
+  // Target language for the conversation (agents respond in this language)
+  targetLanguage?: string;
   // Archive status
   isArchived?: boolean;
   createdAt: number;
@@ -181,6 +189,9 @@ export interface AppSettings {
   defaultPlainTextOnly: boolean;
   showKeyboardShortcuts: boolean;
   autoScrollMessages: boolean;
+  // Enabled language codes for conversation target language selector
+  // Empty string '' represents English (default)
+  enabledLanguages: string[];
 }
 
 // ----- LLM Types -----
@@ -236,6 +247,13 @@ export interface TurnQueueState {
   queue: TurnQueueItem[];
 }
 
+// Round decision event payload
+export interface RoundDecisionEvent {
+  conversationId: string;
+  recommendedRounds: number;
+  reasoning: string;
+}
+
 export interface AppEvents {
   'conversation:created': Conversation;
   'conversation:updated': Conversation;
@@ -246,6 +264,7 @@ export interface AppEvents {
   'conversation:resumed': string;
   'conversation:stopped': string;
   'conversation:reset': string;
+  'conversation:rounds-decided': RoundDecisionEvent;
   'turn:started': Turn;
   'turn:completed': Turn;
   'turn:failed': Turn;

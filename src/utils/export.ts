@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Export Utilities
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { conversationStorage, messageStorage, agentStorage, resultDraftStorage, presetStorage } from '../storage/storage-manager';
@@ -121,9 +121,94 @@ export async function exportConversationToMarkdown(conversationId: string): Prom
 }
 
 /**
+ * Export a conversation to plain text
+ */
+export async function exportConversationToText(conversationId: string): Promise<string> {
+  const conversation = await conversationStorage.getById(conversationId);
+  if (!conversation) throw new Error('Conversation not found');
+
+  const agents = await agentStorage.getByConversation(conversationId);
+  const messages = await messageStorage.getByConversation(conversationId);
+  const resultDraft = await resultDraftStorage.get(conversationId);
+
+  const agentMap = new Map(agents.map(a => [a.id, a]));
+
+  const lines: string[] = [];
+  const separator = '─'.repeat(60);
+
+  // Header
+  lines.push(separator);
+  lines.push(conversation.subject.toUpperCase());
+  lines.push(separator);
+  lines.push('');
+  lines.push(`Goal: ${conversation.goal}`);
+  lines.push(`Mode: ${conversation.mode}`);
+  lines.push(`Status: ${conversation.status}`);
+  lines.push(`Created: ${new Date(conversation.createdAt).toLocaleString()}`);
+  lines.push('');
+
+  // Participants
+  lines.push('PARTICIPANTS');
+  lines.push('');
+  for (const agent of agents.filter(a => !a.isSecretary)) {
+    lines.push(`  • ${agent.name} - ${agent.role}`);
+  }
+  lines.push('');
+
+  // Result (if available)
+  if (resultDraft?.summary) {
+    lines.push(separator);
+    lines.push('SUMMARY');
+    lines.push(separator);
+    lines.push('');
+    lines.push(resultDraft.summary);
+    lines.push('');
+  }
+
+  if (resultDraft?.keyDecisions) {
+    lines.push(separator);
+    lines.push('KEY DECISIONS');
+    lines.push(separator);
+    lines.push('');
+    lines.push(resultDraft.keyDecisions);
+    lines.push('');
+  }
+
+  // Conversation
+  lines.push(separator);
+  lines.push('CONVERSATION');
+  lines.push(separator);
+  lines.push('');
+
+  let currentRound = -1;
+  for (const message of messages) {
+    if (message.round !== currentRound) {
+      currentRound = message.round;
+      lines.push('');
+      lines.push(`── Round ${currentRound + 1} ──`);
+      lines.push('');
+    }
+
+    const agent = message.agentId ? agentMap.get(message.agentId) : null;
+    const senderName = message.type === 'interjection' ? 'User' : (agent?.name || 'System');
+
+    lines.push(`[${senderName}]`);
+    lines.push(message.content);
+    lines.push('');
+  }
+
+  // Footer
+  lines.push(separator);
+  lines.push(`Exported from AI Brainstorm on ${new Date().toLocaleString()}`);
+  lines.push(separator);
+
+  return lines.join('\n');
+}
+
+/**
  * Download conversation as file
  */
-export async function downloadConversation(conversationId: string, format: 'json' | 'markdown'): Promise<void> {
+export async function downloadConversation(conversationId: string, format: 'json' | 'markdown' | 'text'): Promise<void> {
   const conversation = await conversationStorage.getById(conversationId);
   if (!conversation) throw new Error('Conversation not found');
 
@@ -132,9 +217,12 @@ export async function downloadConversation(conversationId: string, format: 'json
   if (format === 'json') {
     const content = await exportConversationToJSON(conversationId);
     downloadAsFile(content, `${filename}.json`, 'application/json');
-  } else {
+  } else if (format === 'markdown') {
     const content = await exportConversationToMarkdown(conversationId);
     downloadAsFile(content, `${filename}.md`, 'text/markdown');
+  } else {
+    const content = await exportConversationToText(conversationId);
+    downloadAsFile(content, `${filename}.txt`, 'text/plain');
   }
 }
 

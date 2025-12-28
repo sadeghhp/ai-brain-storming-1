@@ -1,12 +1,12 @@
 // ============================================
 // AI Brainstorm - Secretary Agent
-// Version: 2.0.0
+// Version: 2.2.0
 // ============================================
 
 import { Agent } from './agent';
 import { llmRouter } from '../llm/llm-router';
 import { buildSummaryPrompt } from '../llm/prompt-builder';
-import { resultDraftStorage, messageStorage, agentStorage } from '../storage/storage-manager';
+import { resultDraftStorage, messageStorage, agentStorage, conversationStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import type { Message, ResultDraft, Conversation, Agent as AgentType } from '../types';
 import type { LLMMessage } from '../llm/types';
@@ -58,8 +58,9 @@ export class SecretaryAgent {
       return 'No discussion to summarize yet.';
     }
 
+    const conversation = await conversationStorage.getById(this.conversationId);
     const agents = await agentStorage.getByConversation(this.conversationId);
-    const prompt = buildSummaryPrompt(messages, agents);
+    const prompt = buildSummaryPrompt(messages, agents, conversation?.targetLanguage);
 
     this.agent.setStatus('thinking');
 
@@ -91,12 +92,16 @@ export class SecretaryAgent {
       return '';
     }
 
+    const conversation = await conversationStorage.getById(this.conversationId);
+    const targetLanguage = conversation?.targetLanguage;
     const agents = await agentStorage.getByConversation(this.conversationId);
 
     const prompt: LLMMessage[] = [
       {
         role: 'system',
         content: `${SECRETARY_NEUTRALITY_PROMPT}
+
+${targetLanguage ? `\nLANGUAGE REQUIREMENT: Write the entire summary in ${targetLanguage}.\n` : ''}
 
 You are summarizing Round ${round} of a discussion. Create a brief, neutral summary that:
 1. Lists the main points each participant made (attribute by name)
@@ -128,9 +133,100 @@ Keep it concise (2-4 paragraphs). Other participants will see this summary befor
       return response.content || streamed;
     } catch (error) {
       console.error('[Secretary] Failed to generate round summary:', error);
-      return `Round ${round}: ${messages.length} messages were exchanged.`;
+      // Avoid injecting English into the conversation when a target language is set.
+      return '';
     } finally {
       eventBus.emit('stream:complete', { agentId: this.agent.id });
+    }
+  }
+
+  /**
+   * Analyze the first round and decide how many total rounds are needed
+   * Returns the recommended number of rounds (2-10) and reasoning
+   */
+  async analyzeAndDecideRounds(
+    conversation: Conversation,
+    completedRound: number
+  ): Promise<{ recommendedRounds: number; reasoning: string }> {
+    const targetLanguage = conversation.targetLanguage;
+    const messages = await messageStorage.getByRound(this.conversationId, completedRound);
+    
+    if (messages.length === 0) {
+      return { 
+        recommendedRounds: 3, 
+        reasoning: `No messages in round ${completedRound}; defaulting to 3 rounds.` 
+      };
+    }
+
+    const agents = await agentStorage.getByConversation(this.conversationId);
+
+    const prompt: LLMMessage[] = [
+      {
+        role: 'system',
+        content: `${SECRETARY_NEUTRALITY_PROMPT}
+
+You are analyzing the first round of a discussion to determine how many total rounds are needed to reach a productive conclusion.
+
+Topic: ${conversation.subject}
+Goal: ${conversation.goal}
+
+${targetLanguage ? `LANGUAGE REQUIREMENT: Write the "reasoning" value in ${targetLanguage}.` : ''}
+
+Analyze the discussion and decide the optimal number of rounds (between 2 and 10) based on:
+1. Topic complexity - More complex topics need more rounds
+2. Goal progress - How far are participants from achieving the stated goal?
+3. Convergence potential - Are participants likely to reach consensus, or is there significant disagreement?
+4. Depth of discussion - Are participants exploring surface-level or deep insights?
+
+You MUST respond in this exact JSON format:
+{
+  "recommendedRounds": <number between 2 and 10>,
+  "reasoning": "<brief explanation of your decision>"
+}
+
+No other text outside the JSON.`,
+      },
+      {
+        role: 'user',
+        content: this.formatMessagesForSummary(messages, agents),
+      },
+    ];
+
+    this.agent.setStatus('thinking');
+
+    try {
+      const response = await llmRouter.complete(this.agent.llmProviderId, {
+        model: this.agent.modelId,
+        messages: prompt,
+        temperature: 0.3, // Low temperature for consistent decision-making
+        maxTokens: 300,
+      });
+
+      this.agent.setStatus('idle');
+
+      // Parse JSON response
+      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const rounds = Math.min(10, Math.max(2, parseInt(parsed.recommendedRounds, 10) || 5));
+        return {
+          recommendedRounds: rounds,
+          reasoning: parsed.reasoning || 'Analysis complete.',
+        };
+      }
+
+      // Fallback if parsing fails
+      return { 
+        recommendedRounds: 5, 
+        reasoning: 'Unable to parse analysis; defaulting to 5 rounds.' 
+      };
+    } catch (error) {
+      this.agent.setStatus('idle');
+      console.error('[Secretary] Failed to analyze and decide rounds:', error);
+      return { 
+        recommendedRounds: 5, 
+        reasoning: 'Analysis failed; defaulting to 5 rounds.' 
+      };
     }
   }
 
@@ -213,6 +309,198 @@ Keep it concise (2-4 paragraphs). Other participants will see this summary befor
       console.error('[Secretary] Failed to generate result draft:', error);
       throw error;
     }
+  }
+
+  /**
+   * Generate a comprehensive final result after all rounds complete
+   * This is called automatically when the conversation reaches its final round
+   * Incorporates all round summaries into a cohesive final document
+   */
+  async generateFinalComprehensiveResult(conversation: Conversation): Promise<ResultDraft> {
+    const messages = await messageStorage.getByConversation(this.conversationId);
+    const agents = await agentStorage.getByConversation(this.conversationId);
+    const existingDraft = await resultDraftStorage.get(this.conversationId);
+    const roundSummaries = existingDraft?.roundSummaries || [];
+
+    this.agent.setStatus('thinking');
+    eventBus.emit('agent:thinking', this.agent.id);
+
+    try {
+      // Build context from all round summaries
+      const roundSummariesText = roundSummaries.length > 0
+        // Avoid hardcoded English labels; summaries already include their own structure/language.
+        ? roundSummaries.join('\n\n---\n\n')
+        : 'No round summaries available.';
+
+      // Step 1: Generate comprehensive executive summary incorporating all rounds
+      const executiveSummary = await this.extractFinalExecutiveSummary(
+        conversation,
+        messages,
+        agents,
+        roundSummariesText
+      );
+
+      // Step 2: Extract final themes across all rounds
+      const themes = await this.extractThemes(messages, agents);
+
+      // Step 3: Identify final consensus areas
+      const consensusAreas = await this.extractConsensus(messages, agents);
+
+      // Step 4: Identify final disagreements
+      const disagreements = await this.extractDisagreements(messages, agents);
+
+      // Step 5: Generate final recommendations
+      const recommendations = await this.extractRecommendations(conversation, messages, agents);
+
+      // Step 6: Extract action items
+      const actionItems = await this.extractActionItems(messages, agents);
+
+      // Step 7: Identify remaining open questions
+      const openQuestions = await this.extractOpenQuestions(messages, agents);
+
+      this.agent.setStatus('idle');
+      eventBus.emit('agent:idle', this.agent.id);
+
+      // Build comprehensive final content
+      const content = this.buildFinalComprehensiveContent({
+        executiveSummary,
+        themes,
+        consensusAreas,
+        disagreements,
+        recommendations,
+        actionItems,
+        openQuestions,
+        roundSummaries,
+        totalRounds: conversation.currentRound,
+        participantCount: agents.filter(a => !a.isSecretary).length,
+      });
+
+      const draft = await resultDraftStorage.update(this.conversationId, {
+        content,
+        summary: executiveSummary,
+        keyDecisions: consensusAreas,
+        executiveSummary,
+        themes,
+        consensusAreas,
+        disagreements,
+        recommendations,
+        actionItems,
+        openQuestions,
+        roundSummaries,
+      });
+
+      eventBus.emit('draft:updated', draft);
+      return draft;
+    } catch (error) {
+      this.agent.setStatus('idle');
+      eventBus.emit('agent:idle', this.agent.id);
+      console.error('[Secretary] Failed to generate final comprehensive result:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Extract a comprehensive executive summary for the final result
+   */
+  private async extractFinalExecutiveSummary(
+    conversation: Conversation,
+    messages: Message[],
+    agents: AgentType[],
+    roundSummariesText: string
+  ): Promise<string> {
+    const prompt: LLMMessage[] = [
+      {
+        role: 'system',
+        content: `${SECRETARY_NEUTRALITY_PROMPT}
+
+Write a comprehensive executive summary (3-5 sentences) of the entire discussion across all rounds.
+
+Topic: ${conversation.subject}
+Goal: ${conversation.goal}
+Total Rounds: ${conversation.currentRound}
+
+Focus on:
+- The overall arc of the discussion
+- Key conclusions reached
+- Whether the goal was achieved
+- Any significant outcomes or decisions
+
+Be factual and neutral.`,
+      },
+      {
+        role: 'user',
+        content: `Round Summaries:\n${roundSummariesText}\n\nFull Discussion:\n${this.formatMessagesForSummary(messages, agents)}`,
+      },
+    ];
+
+    const response = await llmRouter.complete(this.agent.llmProviderId, {
+      model: this.agent.modelId,
+      messages: prompt,
+      temperature: 0.3,
+      maxTokens: 500,
+    });
+
+    return response.content;
+  }
+
+  /**
+   * Build comprehensive final content including round-by-round progress
+   */
+  private buildFinalComprehensiveContent(sections: {
+    executiveSummary: string;
+    themes: string[];
+    consensusAreas: string;
+    disagreements: string;
+    recommendations: string;
+    actionItems: string;
+    openQuestions: string;
+    roundSummaries: string[];
+    totalRounds: number;
+    participantCount: number;
+  }): string {
+    const parts: string[] = [];
+
+    parts.push('# Final Discussion Result\n');
+    
+    parts.push('## Overview\n');
+    parts.push(`- **Total Rounds:** ${sections.totalRounds}`);
+    parts.push(`- **Participants:** ${sections.participantCount}`);
+    parts.push('');
+
+    parts.push('## Executive Summary\n');
+    parts.push(sections.executiveSummary + '\n');
+
+    if (sections.themes.length > 0) {
+      parts.push('## Main Themes\n');
+      sections.themes.forEach(theme => parts.push(`- ${theme}`));
+      parts.push('');
+    }
+
+    parts.push('## Areas of Consensus\n');
+    parts.push(sections.consensusAreas + '\n');
+
+    parts.push('## Areas of Disagreement\n');
+    parts.push(sections.disagreements + '\n');
+
+    parts.push('## Recommendations\n');
+    parts.push(sections.recommendations + '\n');
+
+    parts.push('## Action Items\n');
+    parts.push(sections.actionItems + '\n');
+
+    parts.push('## Open Questions\n');
+    parts.push(sections.openQuestions + '\n');
+
+    // Add round-by-round summary section
+    if (sections.roundSummaries.length > 0) {
+      parts.push('## Round-by-Round Progress\n');
+      sections.roundSummaries.forEach((summary, index) => {
+        parts.push(`### Round ${index + 1}\n`);
+        parts.push(summary + '\n');
+      });
+    }
+
+    return parts.join('\n');
   }
 
   // ----- Multi-Step Extraction Methods -----

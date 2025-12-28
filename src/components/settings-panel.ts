@@ -1,12 +1,13 @@
 // ============================================
 // AI Brainstorm - Settings Panel Component
-// Version: 2.1.0
+// Version: 2.2.0
 // ============================================
 
 import { settingsStorage, providerStorage } from '../storage/storage-manager';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
+import { ALL_LANGUAGES } from '../utils/languages';
 import type { AppSettings, LLMProvider, ApiFormat } from '../types';
 
 export class SettingsPanel extends HTMLElement {
@@ -498,6 +499,73 @@ export class SettingsPanel extends HTMLElement {
         .modal-btn.primary:hover {
           opacity: 0.9;
         }
+
+        /* Language selection grid */
+        .language-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+          gap: var(--space-2);
+          max-height: 320px;
+          overflow-y: auto;
+          padding: var(--space-2);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+        }
+
+        .language-item {
+          display: flex;
+          flex-direction: column;
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-bg-primary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          position: relative;
+        }
+
+        .language-item:hover {
+          background: var(--color-surface-hover);
+          border-color: var(--color-primary);
+        }
+
+        .language-item.enabled {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+        }
+
+        .language-item.locked {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+
+        .language-item.locked::after {
+          content: '(Required)';
+          position: absolute;
+          top: var(--space-1);
+          right: var(--space-2);
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+        }
+
+        .language-checkbox {
+          position: absolute;
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+
+        .language-name {
+          font-weight: var(--font-medium);
+          color: var(--color-text-primary);
+          font-size: var(--text-sm);
+        }
+
+        .language-native {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+        }
       </style>
 
       <div class="settings-header">
@@ -664,6 +732,38 @@ export class SettingsPanel extends HTMLElement {
               <input type="checkbox" id="keyboard-shortcuts" ${this.settings.showKeyboardShortcuts ? 'checked' : ''}>
               <span class="toggle-slider"></span>
             </label>
+          </div>
+        </div>
+
+        <!-- Conversation Languages Section -->
+        <div class="section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+            Conversation Languages
+          </div>
+          <div class="form-hint" style="margin-bottom: var(--space-3);">
+            Select which languages appear in the conversation language selector. English is always available.
+          </div>
+          <div class="language-grid">
+            ${ALL_LANGUAGES.map(lang => {
+              const isEnglish = lang.code === '';
+              const isEnabled = isEnglish || this.settings!.enabledLanguages.includes(lang.code);
+              return `
+                <label class="language-item ${isEnabled ? 'enabled' : ''} ${isEnglish ? 'locked' : ''}">
+                  <input type="checkbox" 
+                         class="language-checkbox" 
+                         data-lang-code="${lang.code}"
+                         ${isEnabled ? 'checked' : ''}
+                         ${isEnglish ? 'disabled' : ''}>
+                  <span class="language-name">${lang.name}</span>
+                  <span class="language-native">${lang.nativeName}</span>
+                </label>
+              `;
+            }).join('')}
           </div>
         </div>
 
@@ -924,6 +1024,44 @@ export class SettingsPanel extends HTMLElement {
       const checked = (e.target as HTMLInputElement).checked;
       this.settings = await settingsStorage.update({ showKeyboardShortcuts: checked });
       eventBus.emit('settings:updated', this.settings!);
+    });
+
+    // Language checkboxes
+    this.shadowRoot?.querySelectorAll('.language-checkbox').forEach(checkbox => {
+      checkbox.addEventListener('change', async (e) => {
+        const input = e.target as HTMLInputElement;
+        const langCode = input.dataset.langCode;
+        if (langCode === undefined) return; // Skip if no code (shouldn't happen)
+        
+        // Don't allow unchecking English (empty code)
+        if (langCode === '' && !input.checked) {
+          input.checked = true;
+          return;
+        }
+
+        const currentEnabled = new Set(this.settings?.enabledLanguages || ['']);
+        
+        if (input.checked) {
+          currentEnabled.add(langCode);
+        } else {
+          currentEnabled.delete(langCode);
+        }
+
+        // Always ensure English is included
+        currentEnabled.add('');
+        
+        this.settings = await settingsStorage.update({ 
+          enabledLanguages: Array.from(currentEnabled) 
+        });
+        
+        // Update UI to reflect state
+        const labelEl = input.closest('.language-item');
+        if (labelEl) {
+          labelEl.classList.toggle('enabled', input.checked);
+        }
+        
+        eventBus.emit('settings:updated', this.settings!);
+      });
     });
 
     // Close modals when clicking overlay
