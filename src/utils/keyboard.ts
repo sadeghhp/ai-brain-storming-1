@@ -4,6 +4,7 @@
 // ============================================
 
 import { eventBus } from './event-bus';
+import { settingsStorage } from '../storage/storage-manager';
 
 export interface KeyboardShortcut {
   key: string;
@@ -16,6 +17,42 @@ export interface KeyboardShortcut {
 }
 
 const shortcuts: KeyboardShortcut[] = [];
+
+let shortcutsEnabled = true;
+let loadedSettingsOnce = false;
+
+async function refreshShortcutsEnabled(): Promise<void> {
+  try {
+    const settings = await settingsStorage.get();
+    shortcutsEnabled = settings.showKeyboardShortcuts;
+    loadedSettingsOnce = true;
+  } catch {
+    // If settings can't be loaded, default to enabled.
+    shortcutsEnabled = true;
+  }
+}
+
+function isEditableFromComposedPath(event: KeyboardEvent): boolean {
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+  const candidates = (path.length ? path : [event.target]).filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (!(candidate instanceof HTMLElement)) continue;
+
+    if (candidate instanceof HTMLTextAreaElement) return true;
+
+    if (candidate instanceof HTMLInputElement) {
+      const type = (candidate.getAttribute('type') || 'text').toLowerCase();
+      const nonTypingTypes = new Set(['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file']);
+      if (!nonTypingTypes.has(type)) return true;
+    }
+
+    if (candidate.isContentEditable) return true;
+    if (candidate.getAttribute('role') === 'textbox') return true;
+  }
+
+  return false;
+}
 
 /**
  * Register a keyboard shortcut
@@ -42,9 +79,18 @@ export function handleKeydown(event: KeyboardEvent): boolean {
     return true;
   }
 
+  // Lazy-load settings so the first keystroke doesn't block startup
+  if (!loadedSettingsOnce) {
+    void refreshShortcutsEnabled();
+  }
+
+  // Respect user setting: allow disabling keyboard shortcuts entirely
+  if (!shortcutsEnabled) {
+    return false;
+  }
+
   // Don't handle if user is typing in an input
-  const target = event.target as HTMLElement;
-  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+  if (isEditableFromComposedPath(event)) {
     // Allow Ctrl/Cmd + Enter in textareas
     if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') {
       return false;
@@ -251,11 +297,13 @@ function showShortcutsHelp(): void {
   `;
 
   // Prevent outside-click handlers behind the overlay from firing (e.g. closing other modals)
+  // Only stop propagation on the backdrop itself, not on content (to allow text selection)
   overlay.addEventListener(
     'pointerdown',
     (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+      if (e.target === overlay) {
+        e.stopPropagation();
+      }
     },
     { capture: true }
   );
@@ -276,6 +324,12 @@ function showShortcutsHelp(): void {
 
 // Initialize when module loads
 initializeDefaultShortcuts();
+void refreshShortcutsEnabled();
+
+eventBus.on('settings:updated', (settings) => {
+  shortcutsEnabled = settings.showKeyboardShortcuts;
+  loadedSettingsOnce = true;
+});
 
 // Set up global listener
 window.addEventListener('keydown', handleKeydown, { capture: true });

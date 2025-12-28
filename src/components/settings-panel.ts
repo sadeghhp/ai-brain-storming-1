@@ -657,6 +657,14 @@ export class SettingsPanel extends HTMLElement {
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <div class="toggle-group">
+            <span class="toggle-label">Enable keyboard shortcuts</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="keyboard-shortcuts" ${this.settings.showKeyboardShortcuts ? 'checked' : ''}>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
 
         <div class="version-info">
@@ -910,6 +918,12 @@ export class SettingsPanel extends HTMLElement {
     this.shadowRoot?.getElementById('auto-scroll')?.addEventListener('change', async (e) => {
       const checked = (e.target as HTMLInputElement).checked;
       this.settings = await settingsStorage.update({ autoScrollMessages: checked });
+    });
+
+    this.shadowRoot?.getElementById('keyboard-shortcuts')?.addEventListener('change', async (e) => {
+      const checked = (e.target as HTMLInputElement).checked;
+      this.settings = await settingsStorage.update({ showKeyboardShortcuts: checked });
+      eventBus.emit('settings:updated', this.settings!);
     });
 
     // Close modals when clicking overlay
