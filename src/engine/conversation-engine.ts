@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.8.0
+// Version: 2.9.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -785,11 +785,34 @@ export class ConversationEngine {
 
   /**
    * Load an existing conversation
+   * If the conversation was interrupted (status === 'running' but no active engine),
+   * it will be recovered to 'paused' state so it can be resumed.
    */
   static async load(conversationId: string): Promise<ConversationEngine | null> {
     const conversation = await conversationStorage.getById(conversationId);
     if (!conversation) {
       return null;
+    }
+
+    // Recovery: If conversation status is 'running' but we're loading fresh,
+    // it means the page was refreshed mid-run. Recover to 'paused' state.
+    if (conversation.status === 'running') {
+      console.log(`[Engine] Recovering interrupted conversation ${conversationId}`);
+      
+      // Mark any running turns as failed (they will be retried on resume)
+      const failedCount = await turnStorage.markRunningAsFailed(
+        conversationId,
+        'Interrupted by page refresh'
+      );
+      if (failedCount > 0) {
+        console.log(`[Engine] Marked ${failedCount} running turn(s) as failed for retry`);
+      }
+      
+      // Update conversation status to paused
+      await conversationStorage.update(conversationId, { status: 'paused' });
+      conversation.status = 'paused';
+      
+      console.log(`[Engine] Conversation ${conversationId} recovered to paused state`);
     }
 
     const engine = new ConversationEngine(conversation);

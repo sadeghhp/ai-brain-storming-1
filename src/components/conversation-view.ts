@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation View Component
-// Version: 2.2.0
+// Version: 2.3.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -614,7 +614,7 @@ export class ConversationView extends HTMLElement {
 
       <div class="main-content">
         <div class="message-area">
-          <message-stream conversation-id="${conversation.id}"></message-stream>
+          <message-stream conversation-id="${conversation.id}" target-language="${conversation.targetLanguage || ''}"></message-stream>
           <user-input conversation-id="${conversation.id}"></user-input>
         </div>
         <aside class="result-panel">

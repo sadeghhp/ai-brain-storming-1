@@ -1,13 +1,14 @@
 // ============================================
 // AI Brainstorm - Context Builder
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import type { Agent, Conversation, Message, UserInterjection, Notebook } from '../types';
 import type { LLMMessage } from '../llm/types';
-import { buildSystemPrompt } from '../llm/prompt-builder';
+import { buildSystemPrompt, calculateWordLimit, getDepthConfig } from '../llm/prompt-builder';
 import { countTokens } from '../llm/token-counter';
 import { ContextStrategy } from './context-strategy';
+import { getStrategyById } from '../strategies/starting-strategies';
 
 export interface ContextComponents {
   systemPrompt: string;
@@ -15,6 +16,11 @@ export interface ContextComponents {
   interjections: UserInterjection[];
   messages: Message[];
   promptMessages: LLMMessage[];
+}
+
+export interface BuildOptions {
+  isFirstTurn?: boolean;
+  currentRound?: number;
 }
 
 /**
@@ -41,10 +47,21 @@ export class ContextBuilder {
     messages: Message[],
     interjections: UserInterjection[],
     notebook: Notebook | null,
-    secretarySummary?: string
+    secretarySummary?: string,
+    options: BuildOptions = {}
   ): ContextComponents {
-    // Build system prompt
-    const systemPrompt = buildSystemPrompt(agent, this.conversation);
+    const isFirstTurn = options.isFirstTurn ?? (messages.filter(m => m.type === 'response').length === 0);
+    const currentRound = options.currentRound ?? this.conversation.currentRound;
+
+    // Build system prompt with word limit instruction
+    let systemPrompt = buildSystemPrompt(agent, this.conversation);
+    
+    // Add word limit instruction (skip for secretary)
+    if (!agent.isSecretary) {
+      const wordLimit = calculateWordLimit(this.conversation, agent, isFirstTurn);
+      systemPrompt += this.buildWordLimitInstruction(wordLimit, agent.thinkingDepth);
+    }
+
     const systemTokens = countTokens(systemPrompt);
 
     // Calculate budget
@@ -74,7 +91,9 @@ export class ContextBuilder {
       selectedMessages,
       selectedInterjections,
       truncatedNotebook,
-      secretarySummary
+      secretarySummary,
+      isFirstTurn,
+      currentRound
     );
 
     return {
@@ -87,6 +106,35 @@ export class ContextBuilder {
   }
 
   /**
+   * Build word limit instruction based on conversation depth
+   */
+  private buildWordLimitInstruction(
+    wordLimit: { limit: number; isExtended: boolean; baseLimit: number },
+    thinkingDepth: number
+  ): string {
+    const depthConfig = this.conversation.conversationDepth 
+      ? getDepthConfig(this.conversation.conversationDepth) 
+      : null;
+    
+    // Adjust limit slightly based on thinking depth
+    const depthBonus = Math.floor(wordLimit.limit * (thinkingDepth - 1) * 0.05);
+    const adjustedLimit = wordLimit.limit + depthBonus;
+    
+    if (depthConfig) {
+      return wordLimit.isExtended 
+        ? `\n${depthConfig.extendedGuidance}`
+        : `\n${depthConfig.promptGuidance}`;
+    }
+    
+    // Fallback to generic instructions
+    if (wordLimit.isExtended) {
+      return `\nRESPONSE LENGTH: You may elaborate more this turn. Aim for around ${adjustedLimit} words, but prioritize quality over hitting the exact count.`;
+    }
+    
+    return `\nRESPONSE LENGTH: Keep your response concise, around ${adjustedLimit} words. Be focused and get to the point quickly while still being substantive.`;
+  }
+
+  /**
    * Build the array of LLM messages
    */
   private buildPromptMessages(
@@ -96,12 +144,56 @@ export class ContextBuilder {
     messages: Message[],
     interjections: UserInterjection[],
     notebook: string,
-    secretarySummary?: string
+    secretarySummary?: string,
+    isFirstTurn: boolean = false,
+    currentRound: number = 0
   ): LLMMessage[] {
     const result: LLMMessage[] = [];
 
     // System prompt
     result.push({ role: 'system', content: systemPrompt });
+
+    // Opening statement for first turn (high visibility context)
+    if (isFirstTurn && this.conversation.openingStatement) {
+      result.push({
+        role: 'system',
+        content: `DISCUSSION CONTEXT:\n${this.conversation.openingStatement}`,
+      });
+    }
+
+    // Current state context (helps agents understand where they are in the discussion)
+    if (currentRound > 0 || !isFirstTurn) {
+      const effectiveMaxRounds = this.conversation.recommendedRounds || this.conversation.maxRounds;
+      const displayRound = currentRound + 1;
+      
+      let stateContent = '';
+      
+      if (effectiveMaxRounds) {
+        stateContent = `CURRENT STATE: Round ${displayRound} of ${effectiveMaxRounds}.`;
+        
+        // Add phase guidance based on conversation progress
+        const progress = displayRound / effectiveMaxRounds;
+        if (progress <= 0.33) {
+          stateContent += ' PHASE: Exploration - share initial thoughts and explore different perspectives.';
+        } else if (progress <= 0.66) {
+          stateContent += ' PHASE: Development - build on ideas, address disagreements, find common ground.';
+        } else {
+          stateContent += ' PHASE: Convergence - work toward conclusions and actionable outcomes.';
+        }
+      } else {
+        stateContent = `CURRENT STATE: Round ${displayRound}. Continue building on the discussion.`;
+      }
+      
+      // Add round decision reasoning if available (helps agents understand why this many rounds)
+      if (this.conversation.roundDecisionReasoning && displayRound === 2) {
+        stateContent += `\nDiscussion scope: ${this.conversation.roundDecisionReasoning}`;
+      }
+      
+      result.push({
+        role: 'system',
+        content: stateContent,
+      });
+    }
 
     // Secretary summary (if available)
     if (secretarySummary) {
@@ -115,7 +207,7 @@ export class ContextBuilder {
     if (notebook) {
       result.push({
         role: 'system',
-        content: `Your notes:\n${notebook}`,
+        content: `Your personal notes from this conversation:\n${notebook}`,
       });
     }
 
@@ -133,7 +225,7 @@ export class ContextBuilder {
     }
 
     // Final prompt
-    result.push(this.buildFinalPrompt(agent, allAgents));
+    result.push(this.buildFinalPrompt(agent, allAgents, isFirstTurn));
 
     return result;
   }
@@ -148,6 +240,14 @@ export class ContextBuilder {
   ): LLMMessage {
     const sender = allAgents.find(a => a.id === message.agentId);
 
+    // Opening messages (system-generated from strategy)
+    if (message.type === 'opening') {
+      return {
+        role: 'system',
+        content: `[DISCUSSION OPENING]: ${message.content}`,
+      };
+    }
+
     // Own messages are assistant role
     if (message.agentId === currentAgent.id) {
       return { role: 'assistant', content: message.content };
@@ -161,6 +261,15 @@ export class ContextBuilder {
     // System messages
     if (message.type === 'system') {
       return { role: 'system', content: message.content };
+    }
+
+    // Summary messages from secretary
+    if (message.type === 'summary') {
+      const senderName = sender?.name || 'Secretary';
+      return { 
+        role: 'system', 
+        content: `[${senderName} Summary]: ${message.content}` 
+      };
     }
 
     // Other agents' messages
@@ -187,7 +296,7 @@ export class ContextBuilder {
   /**
    * Build the final prompt asking for the agent's response
    */
-  private buildFinalPrompt(agent: Agent, allAgents: Agent[]): LLMMessage {
+  private buildFinalPrompt(agent: Agent, allAgents: Agent[], isFirstTurn: boolean = false): LLMMessage {
     const otherAgents = allAgents
       .filter(a => a.id !== agent.id && !a.isSecretary)
       .map(a => a.name);
@@ -199,9 +308,51 @@ export class ContextBuilder {
       };
     }
 
+    // Special prompt for first speaker with strategy-specific instructions
+    if (isFirstTurn) {
+      let firstTurnPrompt = `You are opening this discussion, ${agent.name}. `;
+      
+      if (this.conversation.startingStrategy) {
+        const strategy = getStrategyById(this.conversation.startingStrategy);
+        if (strategy) {
+          switch (strategy.id) {
+            case 'open-brainstorm':
+              firstTurnPrompt += 'Start by sharing your initial ideas and thoughts freely. Encourage creative exploration.';
+              break;
+            case 'structured-debate':
+              firstTurnPrompt += 'Present your initial position on the topic with clear reasoning.';
+              break;
+            case 'decision-matrix':
+              firstTurnPrompt += 'Begin by identifying the key options or alternatives we should consider.';
+              break;
+            case 'problem-first':
+              firstTurnPrompt += 'Start by analyzing and defining the problem clearly before jumping to solutions.';
+              break;
+            case 'expert-deep-dive':
+              firstTurnPrompt += 'Provide your expert analysis and insights on the topic.';
+              break;
+            case 'devils-advocate':
+              firstTurnPrompt += 'Challenge the assumptions and conventional thinking around this topic.';
+              break;
+            default:
+              firstTurnPrompt += 'Share your perspective to kick off the discussion.';
+          }
+        }
+      } else {
+        firstTurnPrompt += 'Share your perspective to kick off the discussion.';
+      }
+      
+      if (otherAgents.length > 0) {
+        firstTurnPrompt += ` Other participants (${otherAgents.join(', ')}) will respond after you.`;
+      }
+      
+      return { role: 'user', content: firstTurnPrompt };
+    }
+
+    // Regular turn prompt
     const prompt = otherAgents.length > 0
-      ? `It's your turn, ${agent.name}. Share your perspective. You can address others (${otherAgents.join(', ')}) using @name if you'd like them to respond.`
-      : `It's your turn, ${agent.name}. Share your perspective on the topic.`;
+      ? `It's your turn to contribute, ${agent.name}. Consider what others have said and share your perspective. You can address specific participants (${otherAgents.join(', ')}) or respond to the group.`
+      : `It's your turn to contribute, ${agent.name}. Share your perspective on the topic.`;
 
     return { role: 'user', content: prompt };
   }

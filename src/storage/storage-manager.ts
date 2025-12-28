@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Storage Manager
-// Version: 2.1.0
+// Version: 2.2.0
 // ============================================
 
 import { v4 as uuidv4 } from 'uuid';
@@ -263,6 +263,29 @@ export const turnStorage = {
 
   async deleteByConversation(conversationId: string): Promise<number> {
     return db.turns.where('conversationId').equals(conversationId).delete();
+  },
+
+  /**
+   * Mark all running turns as failed (for recovery after page refresh)
+   * Returns the number of turns that were marked as failed
+   */
+  async markRunningAsFailed(conversationId: string, errorMessage: string = 'Interrupted by page refresh'): Promise<number> {
+    const runningTurns = await db.turns
+      .where('conversationId')
+      .equals(conversationId)
+      .filter(t => t.state === 'running')
+      .toArray();
+
+    for (const turn of runningTurns) {
+      await db.turns.put({
+        ...turn,
+        state: 'failed',
+        error: errorMessage,
+        endedAt: Date.now(),
+      });
+    }
+
+    return runningTurns.length;
   },
 };
 

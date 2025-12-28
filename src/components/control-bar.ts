@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Control Bar Component
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import type { ConversationStatus } from '../types';
@@ -298,6 +298,7 @@ export class ControlBar extends HTMLElement {
         stopBtn.disabled = true;
         resetBtn.disabled = false;
         playBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+        playBtn.title = 'Start';
         break;
 
       case 'running':
@@ -305,6 +306,7 @@ export class ControlBar extends HTMLElement {
         pauseBtn.disabled = false;
         stopBtn.disabled = false;
         resetBtn.disabled = true;
+        playBtn.title = 'Start';
         break;
 
       case 'paused':
@@ -313,6 +315,7 @@ export class ControlBar extends HTMLElement {
         stopBtn.disabled = false;
         resetBtn.disabled = false;
         playBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+        playBtn.title = 'Resume';
         break;
 
       case 'completed':

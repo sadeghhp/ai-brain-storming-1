@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Language Constants
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 /**
@@ -61,5 +61,19 @@ export function getEnabledLanguages(enabledCodes: string[]): Language[] {
   codes.add('');
   
   return ALL_LANGUAGES.filter(lang => codes.has(lang.code));
+}
+
+/**
+ * Set of RTL (Right-to-Left) language codes
+ */
+const RTL_LANGUAGES = new Set(['Persian', 'Arabic', 'Hebrew']);
+
+/**
+ * Check if a language code is RTL (Right-to-Left)
+ * @param languageCode The language code to check
+ * @returns true if the language is RTL
+ */
+export function isRTLLanguage(languageCode: string): boolean {
+  return RTL_LANGUAGES.has(languageCode);
 }
 

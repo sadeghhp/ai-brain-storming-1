@@ -1,15 +1,15 @@
 // ============================================
 // AI Brainstorm - Turn Executor
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import { Agent } from '../agents/agent';
 import { NotebookManager } from '../agents/notebook';
-import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage } from '../storage/storage-manager';
-import { buildConversationMessages, creativityToTemperature } from '../llm/prompt-builder';
+import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage, resultDraftStorage } from '../storage/storage-manager';
+import { creativityToTemperature } from '../llm/prompt-builder';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
-// ContextStrategy is used for context management in context-builder
+import { ContextBuilder } from './context-builder';
 import type { Turn, Message, Conversation } from '../types';
 import type { LLMMessage, LLMResponse } from '../llm/types';
 
@@ -162,7 +162,7 @@ export class TurnExecutor {
   }
 
   /**
-   * Build context messages for the agent
+   * Build context messages for the agent using ContextBuilder
    */
   private async buildContext(agent: Agent): Promise<LLMMessage[]> {
     // Get all agents
@@ -177,22 +177,30 @@ export class TurnExecutor {
     // Get notebook
     const notebook = await notebookStorage.get(agent.id);
 
+    // Get secretary summary from result draft (if available)
+    const resultDraft = await resultDraftStorage.get(this.conversation.id);
+    const secretarySummary = resultDraft?.summary || undefined;
+
     // Determine if this is the first turn (no agent responses yet)
     const agentResponses = messages.filter(m => m.type === 'response');
     const isFirstTurn = agentResponses.length === 0;
 
-    // Build context using the prompt builder
-    const context = buildConversationMessages({
-      conversation: this.conversation,
-      agent: agent.entityData,
+    // Use ContextBuilder for better token management and message prioritization
+    const contextBuilder = new ContextBuilder(this.conversation);
+    const contextComponents = contextBuilder.build(
+      agent.entityData,
       allAgents,
       messages,
-      notebook: notebook || undefined,
       interjections,
-      isFirstTurn,
-    });
+      notebook || null,
+      secretarySummary,
+      {
+        isFirstTurn,
+        currentRound: this.conversation.currentRound,
+      }
+    );
 
-    return context;
+    return contextComponents.promptMessages;
   }
 
   /**

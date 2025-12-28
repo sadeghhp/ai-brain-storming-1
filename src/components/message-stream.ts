@@ -1,18 +1,21 @@
 // ============================================
 // AI Brainstorm - Message Stream Component
-// Version: 1.4.0
+// Version: 1.5.0
 // ============================================
 
 import { messageStorage, agentStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { formatRelativeTime, escapeHtml, parseBasicFormatting } from '../utils/helpers';
+import { isRTLLanguage } from '../utils/languages';
 import type { Message, Agent } from '../types';
 
 export class MessageStream extends HTMLElement {
   private messages: Message[] = [];
   private agents: Map<string, Agent> = new Map();
   private conversationId: string | null = null;
+  private targetLanguage: string = '';
+  private isRTL: boolean = false;
   private autoScroll = true;
   private streamingAgentId: string | null = null;
   private streamingContent: string = '';
@@ -20,7 +23,7 @@ export class MessageStream extends HTMLElement {
   private isClickHandlerAttached = false;
 
   static get observedAttributes() {
-    return ['conversation-id'];
+    return ['conversation-id', 'target-language'];
   }
 
   constructor() {
@@ -39,11 +42,20 @@ export class MessageStream extends HTMLElement {
       this.conversationId = newValue;
       this.loadMessages();
     }
+    if (name === 'target-language' && oldValue !== newValue) {
+      this.targetLanguage = newValue || '';
+      this.isRTL = isRTLLanguage(this.targetLanguage);
+      this.renderMessages();
+    }
   }
 
   private async loadMessages() {
     this.conversationId = this.getAttribute('conversation-id');
     if (!this.conversationId) return;
+
+    // Load target language and RTL state
+    this.targetLanguage = this.getAttribute('target-language') || '';
+    this.isRTL = isRTLLanguage(this.targetLanguage);
 
     // Load agents
     const agentList = await agentStorage.getByConversation(this.conversationId);
@@ -215,6 +227,29 @@ export class MessageStream extends HTMLElement {
 
         .message-body strong {
           font-weight: var(--font-semibold);
+        }
+
+        /* RTL (Right-to-Left) support for languages like Persian, Arabic, Hebrew */
+        .message-body.rtl {
+          direction: rtl;
+          text-align: right;
+          border-top-left-radius: var(--radius-lg);
+          border-top-right-radius: var(--radius-sm);
+        }
+
+        .message-body.rtl code {
+          direction: ltr;
+          unicode-bidi: isolate;
+        }
+
+        .interjection .message-body.rtl {
+          border-left: none;
+          border-right: 3px solid var(--color-secondary);
+        }
+
+        .secretary .message-body.rtl {
+          border-left: none;
+          border-right: 3px solid var(--color-primary);
         }
 
         .message-actions {
@@ -772,7 +807,7 @@ export class MessageStream extends HTMLElement {
           </div>
           <div class="collapsed-preview" data-id="${message.id}">${escapeHtml(previewText)}</div>
           <div class="message-body-wrapper ${isCollapsed ? 'collapsed' : ''}">
-            <div class="message-body">${formattedContent}</div>
+            <div class="message-body ${this.isRTL ? 'rtl' : ''}">${formattedContent}</div>
           </div>
           <div class="message-actions">
             <button class="action-btn like-btn" data-id="${message.id}">
@@ -894,7 +929,7 @@ export class MessageStream extends HTMLElement {
               </span>
             </span>
           </div>
-          <div class="message-body streaming-body" style="border-left: 3px solid ${color};"><span class="streaming-cursor"></span></div>
+          <div class="message-body streaming-body ${this.isRTL ? 'rtl' : ''}" style="border-${this.isRTL ? 'right' : 'left'}: 3px solid ${color};"><span class="streaming-cursor"></span></div>
         </div>
       </div>
     `);
@@ -946,7 +981,7 @@ export class MessageStream extends HTMLElement {
               thinking
             </span>
           </div>
-          <div class="message-body" style="border-left: 3px solid ${color}; background: ${color}08;">
+          <div class="message-body ${this.isRTL ? 'rtl' : ''}" style="border-${this.isRTL ? 'right' : 'left'}: 3px solid ${color}; background: ${color}08;">
             <div class="thinking-indicator">
               <span style="background: ${color};"></span>
               <span style="background: ${color};"></span>

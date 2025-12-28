@@ -1,11 +1,20 @@
 // ============================================
 // AI Brainstorm - Context Window Strategy
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import type { Message, Agent, UserInterjection, Notebook } from '../types';
 import type { LLMMessage } from '../llm/types';
 import { countTokens } from '../llm/token-counter';
+
+/**
+ * Message with calculated importance score for prioritized selection
+ */
+interface ScoredMessage {
+  message: Message;
+  score: number;
+  tokens: number;
+}
 
 export interface ContextBudget {
   total: number;
@@ -45,47 +54,117 @@ export class ContextStrategy {
   }
 
   /**
-   * Select messages to fit within token budget
-   * Priority: Recent messages > User interjections > Older messages
+   * Select messages to fit within token budget using importance-based scoring
+   * 
+   * Scoring factors:
+   * - Message type (opening, summary, interjection get priority)
+   * - User votes/weight (highly rated messages)
+   * - Relevance to current agent (addressed to, from same agent)
+   * - Recency (recent messages get slight boost)
+   * - Position in conversation (first/last messages preserved)
    */
   selectMessages(
     messages: Message[],
     budget: number,
     agentId: string
   ): Message[] {
-    if (budget <= 0) return [];
+    if (budget <= 0 || messages.length === 0) return [];
 
-    const selected: Message[] = [];
+    // Calculate importance scores for all messages
+    const scoredMessages: ScoredMessage[] = messages.map((message, index) => ({
+      message,
+      score: this.calculateMessageImportance(message, agentId, index, messages.length),
+      tokens: countTokens(message.content) + 10, // +10 for formatting overhead
+    }));
+
+    // Separate critical messages (must include) from regular messages
+    const criticalMessages = scoredMessages.filter(sm => sm.score >= 100);
+    const regularMessages = scoredMessages.filter(sm => sm.score < 100);
+
+    // Sort regular messages by score (highest first)
+    regularMessages.sort((a, b) => b.score - a.score);
+
+    const selected: ScoredMessage[] = [];
     let usedTokens = 0;
 
-    // Process messages from most recent to oldest
-    const sortedMessages = [...messages].sort((a, b) => b.createdAt - a.createdAt);
-
-    for (const message of sortedMessages) {
-      const messageTokens = countTokens(message.content) + 10; // +10 for formatting overhead
-
-      // Prioritize messages that mention this agent or are from this agent
-      const isRelevant = 
-        message.agentId === agentId ||
-        message.addressedTo === agentId ||
-        message.type === 'interjection';
-
-      // Always include if relevant and fits
-      if (isRelevant && usedTokens + messageTokens <= budget) {
-        selected.push(message);
-        usedTokens += messageTokens;
-        continue;
-      }
-
-      // Include other messages if they fit
-      if (usedTokens + messageTokens <= budget) {
-        selected.push(message);
-        usedTokens += messageTokens;
+    // First, include all critical messages if they fit
+    for (const sm of criticalMessages) {
+      if (usedTokens + sm.tokens <= budget) {
+        selected.push(sm);
+        usedTokens += sm.tokens;
       }
     }
 
-    // Reverse to restore chronological order
-    return selected.reverse();
+    // Then add regular messages by importance score
+    for (const sm of regularMessages) {
+      if (usedTokens + sm.tokens <= budget) {
+        selected.push(sm);
+        usedTokens += sm.tokens;
+      }
+    }
+
+    // Sort selected messages back to chronological order
+    selected.sort((a, b) => a.message.createdAt - b.message.createdAt);
+
+    return selected.map(sm => sm.message);
+  }
+
+  /**
+   * Calculate importance score for a message
+   * Higher score = more important to include
+   */
+  private calculateMessageImportance(
+    message: Message,
+    agentId: string,
+    index: number,
+    totalMessages: number
+  ): number {
+    let score = 0;
+
+    // Message type importance (critical types get 100+ score)
+    switch (message.type) {
+      case 'opening':
+        score += 150; // Opening statement is critical context
+        break;
+      case 'summary':
+        score += 120; // Secretary summaries provide condensed context
+        break;
+      case 'interjection':
+        score += 80; // User guidance is high priority
+        break;
+      case 'system':
+        score += 70; // System messages (round decisions, etc.)
+        break;
+      case 'response':
+        score += 30; // Base score for regular responses
+        break;
+    }
+
+    // Relevance to current agent
+    if (message.agentId === agentId) {
+      score += 40; // Own previous messages (continuity)
+    }
+    if (message.addressedTo === agentId) {
+      score += 50; // Messages addressed to this agent
+    }
+
+    // User weight/votes (each upvote adds 10, downvotes subtract)
+    score += message.weight * 10;
+
+    // Recency bonus (newer messages get slight preference)
+    // Scale: most recent gets +20, oldest gets +0
+    const recencyFactor = index / Math.max(totalMessages - 1, 1);
+    score += Math.floor(recencyFactor * 20);
+
+    // Position bonuses (preserve conversation structure)
+    if (index === 0) {
+      score += 30; // First message (conversation opener)
+    }
+    if (index >= totalMessages - 3) {
+      score += 25; // Last 3 messages (recent context)
+    }
+
+    return score;
   }
 
   /**
