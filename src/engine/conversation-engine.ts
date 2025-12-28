@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.11.0
+// Version: 2.12.2
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -15,6 +15,7 @@ import { conversationStorage, turnStorage, messageStorage, notebookStorage, inte
 import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
 import { selectFirstSpeaker, getStrategyById } from '../strategies/starting-strategies';
+import { acquireLock, releaseLock, isLockedByOtherTab } from '../utils/conversation-lock';
 import type { Conversation, Turn, Message, ConversationStatus, ConversationMode, StartingStrategyId, ConversationDepth, TurnQueueState, TurnQueueItem } from '../types';
 
 export interface ConversationEngineOptions {
@@ -89,27 +90,61 @@ export class ConversationEngine {
    * Start the conversation
    */
   async start(): Promise<void> {
-    if (!this.stateMachine.transition('running')) {
-      console.warn('[Engine] Cannot start - invalid state');
+    const conversationId = this.conversation.id;
+
+    // Try to acquire lock first (multi-tab safety)
+    const lockAcquired = await acquireLock(conversationId);
+    if (!lockAcquired) {
+      console.warn('[Engine] Cannot start - conversation is running in another tab');
+      this.options.onError?.(new Error('This conversation is running in another tab'));
+      eventBus.emit('conversation:lock-denied', conversationId);
       return;
     }
 
-    // #region debug log H0
-    (() => { const payload = {location:'src/engine/conversation-engine.ts:start',message:'start() called',data:{conversationId:this.conversation.id,status:this.stateMachine.currentStatus,currentRound:this.conversation.currentRound,speedMs:this.conversation.speedMs,maxRounds:this.conversation.maxRounds ?? null},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H0'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-    // #endregion
+     let enteredRunningState = false;
+    try {
+      if (!this.stateMachine.transition('running')) {
+        console.warn('[Engine] Cannot start - invalid state');
+        return;
+      }
+       enteredRunningState = true;
 
-    // Reset tracking for new run
-    this.completedAgentsInRound.clear();
-    this.currentTurnAgentId = null;
+      // #region debug log H0
+      (() => { const payload = {location:'src/engine/conversation-engine.ts:start',message:'start() called',data:{conversationId:this.conversation.id,status:this.stateMachine.currentStatus,currentRound:this.conversation.currentRound,speedMs:this.conversation.speedMs,maxRounds:this.conversation.maxRounds ?? null},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H0'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
+      // #endregion
 
-    ConversationEngine.getActiveConversationSet().add(this.conversation.id);
-    await this.updateConversationStatus('running');
-    eventBus.emit('conversation:started', this.conversation.id);
+      // Reset tracking for new run
+      this.completedAgentsInRound.clear();
+      this.currentTurnAgentId = null;
 
-    // Emit initial turn queue state
-    this.emitTurnQueueState();
+      ConversationEngine.getActiveConversationSet().add(conversationId);
+      await this.updateConversationStatus('running');
+      eventBus.emit('conversation:started', conversationId);
 
-    await this.runLoop();
+      // Emit initial turn queue state
+      this.emitTurnQueueState();
+
+      await this.runLoop();
+    } catch (err) {
+      // If runLoop (or any pre-loop work) throws, we MUST release the Web Lock.
+      // Otherwise the conversation can be permanently blocked in this tab.
+      this.turnExecutor?.abort();
+
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error('[Engine] Fatal error in start():', error);
+      this.options.onError?.(error);
+    } finally {
+       // If we actually entered running state and the loop exited unexpectedly while still
+       // marked as running, reconcile state (covers `break` exits too).
+       if (enteredRunningState && this.stateMachine.isRunning()) {
+        this.stateMachine.transition('paused');
+        await this.updateConversationStatus('paused');
+        eventBus.emit('conversation:paused', conversationId);
+      }
+
+      ConversationEngine.getActiveConversationSet().delete(conversationId);
+      releaseLock(conversationId);
+    }
   }
 
   /**
@@ -122,6 +157,7 @@ export class ConversationEngine {
 
     this.turnExecutor?.abort();
     ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
+    releaseLock(this.conversation.id);
     await this.updateConversationStatus('paused');
     eventBus.emit('conversation:paused', this.conversation.id);
   }
@@ -130,15 +166,45 @@ export class ConversationEngine {
    * Resume the conversation
    */
   async resume(): Promise<void> {
-    if (!this.stateMachine.transition('running')) {
+    const conversationId = this.conversation.id;
+
+    // Try to acquire lock first (multi-tab safety)
+    const lockAcquired = await acquireLock(conversationId);
+    if (!lockAcquired) {
+      console.warn('[Engine] Cannot resume - conversation is running in another tab');
+      this.options.onError?.(new Error('This conversation is running in another tab'));
+      eventBus.emit('conversation:lock-denied', conversationId);
       return;
     }
 
-    ConversationEngine.getActiveConversationSet().add(this.conversation.id);
-    await this.updateConversationStatus('running');
-    eventBus.emit('conversation:resumed', this.conversation.id);
+     let enteredRunningState = false;
+    try {
+      if (!this.stateMachine.transition('running')) {
+        return;
+      }
+       enteredRunningState = true;
 
-    await this.runLoop();
+      ConversationEngine.getActiveConversationSet().add(conversationId);
+      await this.updateConversationStatus('running');
+      eventBus.emit('conversation:resumed', conversationId);
+
+      await this.runLoop();
+    } catch (err) {
+      this.turnExecutor?.abort();
+
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error('[Engine] Fatal error in resume():', error);
+      this.options.onError?.(error);
+    } finally {
+       if (enteredRunningState && this.stateMachine.isRunning()) {
+        this.stateMachine.transition('paused');
+        await this.updateConversationStatus('paused');
+        eventBus.emit('conversation:paused', conversationId);
+      }
+
+      ConversationEngine.getActiveConversationSet().delete(conversationId);
+      releaseLock(conversationId);
+    }
   }
 
   /**
@@ -149,6 +215,7 @@ export class ConversationEngine {
     
     if (this.stateMachine.transition('completed')) {
       ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
+      releaseLock(this.conversation.id);
       await this.updateConversationStatus('completed');
       
       // Generate final result draft
@@ -166,6 +233,7 @@ export class ConversationEngine {
     this.turnExecutor?.abort();
     this.stateMachine.reset();
     ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
+    releaseLock(this.conversation.id);
 
     // Delete reactions tied to this conversation's messages (prevents orphaned reactions)
     const existingMessages = await messageStorage.getByConversation(this.conversation.id);
@@ -562,6 +630,7 @@ export class ConversationEngine {
     // Complete the conversation
     if (this.stateMachine.transition('completed')) {
       ConversationEngine.getActiveConversationSet().delete(this.conversation.id);
+      releaseLock(this.conversation.id);
       await this.updateConversationStatus('completed');
       eventBus.emit('conversation:stopped', this.conversation.id);
     }
@@ -834,6 +903,9 @@ export class ConversationEngine {
    * Load an existing conversation
    * If the conversation was interrupted (status === 'running' but no active engine),
    * it will be recovered to 'paused' state so it can be resumed.
+   * 
+   * Multi-tab safety: If another tab holds the lock, we skip recovery
+   * and return the engine in read-only mode (conversation status unchanged).
    */
   static async load(conversationId: string): Promise<ConversationEngine | null> {
     const conversation = await conversationStorage.getById(conversationId);
@@ -843,30 +915,47 @@ export class ConversationEngine {
 
     // Recovery: If conversation status is 'running' but we're loading fresh,
     // it means the page was refreshed mid-run. Recover to 'paused' state.
+    // UNLESS another tab holds the lock (multi-tab safety).
     const activeIds = ConversationEngine.getActiveConversationSet();
     if (conversation.status === 'running' && !activeIds.has(conversationId)) {
-      console.log(`[Engine] Recovering interrupted conversation ${conversationId}`);
+      // Check if another tab is running this conversation
+      const lockedByOther = await isLockedByOtherTab(conversationId);
       
-      // Mark any running turns as failed (they will be retried on resume)
-      const failedCount = await turnStorage.markRunningAsFailed(
-        conversationId,
-        'Interrupted by page refresh'
-      );
-      if (failedCount > 0) {
-        console.log(`[Engine] Marked ${failedCount} running turn(s) as failed for retry`);
+      if (lockedByOther) {
+        // Another tab is running this conversation - don't recover, just load
+        console.log(`[Engine] Conversation ${conversationId} is running in another tab, loading as read-only`);
+      } else {
+        // No other tab holds the lock - this was a refresh/crash, recover to paused
+        console.log(`[Engine] Recovering interrupted conversation ${conversationId}`);
+        
+        // Mark any running turns as failed (they will be retried on resume)
+        const failedCount = await turnStorage.markRunningAsFailed(
+          conversationId,
+          'Interrupted by page refresh'
+        );
+        if (failedCount > 0) {
+          console.log(`[Engine] Marked ${failedCount} running turn(s) as failed for retry`);
+        }
+        
+        // Update conversation status to paused
+        await conversationStorage.update(conversationId, { status: 'paused' });
+        conversation.status = 'paused';
+        
+        console.log(`[Engine] Conversation ${conversationId} recovered to paused state`);
       }
-      
-      // Update conversation status to paused
-      await conversationStorage.update(conversationId, { status: 'paused' });
-      conversation.status = 'paused';
-      
-      console.log(`[Engine] Conversation ${conversationId} recovered to paused state`);
     }
 
     const engine = new ConversationEngine(conversation);
     await engine.initialize();
 
     return engine;
+  }
+
+  /**
+   * Check if this conversation is locked by another tab
+   */
+  async isLockedByOtherTab(): Promise<boolean> {
+    return isLockedByOtherTab(this.conversation.id);
   }
 }
 

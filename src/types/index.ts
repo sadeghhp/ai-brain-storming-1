@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.6.0
+// Version: 1.8.0
 // ============================================
 
 // ----- Enums -----
@@ -235,6 +235,11 @@ export interface AppSettings {
   // Enabled language codes for conversation target language selector
   // Empty string '' represents English (default)
   enabledLanguages: string[];
+  // Agent preset visibility settings
+  // Category IDs to hide (e.g., ['finance', 'data'])
+  hiddenCategories: string[];
+  // Individual preset IDs to hide
+  hiddenPresets: string[];
 }
 
 // ----- LLM Types -----
@@ -307,6 +312,7 @@ export interface AppEvents {
   'conversation:resumed': string;
   'conversation:stopped': string;
   'conversation:reset': string;
+  'conversation:lock-denied': string;
   'conversation:rounds-decided': RoundDecisionEvent;
   'turn:started': Turn;
   'turn:completed': Turn;

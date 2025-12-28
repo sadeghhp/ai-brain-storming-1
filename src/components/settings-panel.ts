@@ -1,18 +1,23 @@
 // ============================================
 // AI Brainstorm - Settings Panel Component
-// Version: 2.2.0
+// Version: 2.3.0
 // ============================================
 
-import { settingsStorage, providerStorage } from '../storage/storage-manager';
+import { settingsStorage, providerStorage, presetStorage } from '../storage/storage-manager';
+import { presetCategories } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { ALL_LANGUAGES } from '../utils/languages';
-import type { AppSettings, LLMProvider, ApiFormat } from '../types';
+import type { AppSettings, LLMProvider, ApiFormat, AgentPreset } from '../types';
+import './agent-preset-editor-modal';
+import type { AgentPresetEditorModal } from './agent-preset-editor-modal';
 
 export class SettingsPanel extends HTMLElement {
   private settings: AppSettings | null = null;
   private providers: LLMProvider[] = [];
+  private presets: AgentPreset[] = [];
+  private expandedAgentCategories: Set<string> = new Set();
 
   constructor() {
     super();
@@ -27,6 +32,7 @@ export class SettingsPanel extends HTMLElement {
   private async loadData() {
     this.settings = await settingsStorage.get();
     this.providers = await providerStorage.getAll();
+    this.presets = await presetStorage.getAll();
   }
 
   private render() {
@@ -566,6 +572,288 @@ export class SettingsPanel extends HTMLElement {
           font-size: var(--text-xs);
           color: var(--color-text-tertiary);
         }
+
+        /* Agent Presets Section Styles */
+        .agents-subsection {
+          margin-bottom: var(--space-4);
+        }
+
+        .agents-subsection-title {
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-secondary);
+          margin-bottom: var(--space-2);
+        }
+
+        .category-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+          gap: var(--space-2);
+          margin-bottom: var(--space-4);
+        }
+
+        .category-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          transition: all var(--transition-fast);
+        }
+
+        .category-toggle:hover {
+          border-color: var(--color-border-strong);
+        }
+
+        .category-toggle.hidden {
+          opacity: 0.5;
+          background: var(--color-bg-tertiary);
+        }
+
+        .category-info {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          font-size: var(--text-sm);
+          color: var(--color-text-primary);
+        }
+
+        .category-icon {
+          font-size: var(--text-base);
+        }
+
+        .mini-toggle {
+          position: relative;
+          width: 32px;
+          height: 18px;
+          flex-shrink: 0;
+        }
+
+        .mini-toggle input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+
+        .mini-toggle .toggle-slider {
+          position: absolute;
+          cursor: pointer;
+          inset: 0;
+          background: var(--color-border);
+          border-radius: var(--radius-full);
+          transition: background var(--transition-fast);
+        }
+
+        .mini-toggle .toggle-slider::before {
+          content: '';
+          position: absolute;
+          height: 14px;
+          width: 14px;
+          left: 2px;
+          bottom: 2px;
+          background: white;
+          border-radius: 50%;
+          transition: transform var(--transition-fast);
+        }
+
+        .mini-toggle input:checked + .toggle-slider {
+          background: var(--color-primary);
+        }
+
+        .mini-toggle input:checked + .toggle-slider::before {
+          transform: translateX(14px);
+        }
+
+        .preset-list {
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          max-height: 400px;
+          overflow-y: auto;
+        }
+
+        .preset-category-section {
+          border-bottom: 1px solid var(--color-border);
+        }
+
+        .preset-category-section:last-child {
+          border-bottom: none;
+        }
+
+        .preset-category-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-3);
+          cursor: pointer;
+          transition: background var(--transition-fast);
+          user-select: none;
+        }
+
+        .preset-category-header:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .preset-category-header.expanded {
+          background: var(--color-surface);
+        }
+
+        .preset-category-title {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-secondary);
+        }
+
+        .preset-category-count {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          background: var(--color-surface);
+          padding: 2px 6px;
+          border-radius: var(--radius-sm);
+          margin-left: var(--space-2);
+        }
+
+        .preset-category-chevron {
+          transition: transform 0.2s ease;
+          color: var(--color-text-tertiary);
+        }
+
+        .preset-category-header.expanded .preset-category-chevron {
+          transform: rotate(180deg);
+        }
+
+        .preset-category-content {
+          display: none;
+          padding: var(--space-2);
+          padding-top: 0;
+        }
+
+        .preset-category-content.expanded {
+          display: block;
+        }
+
+        .preset-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          margin-bottom: var(--space-2);
+          gap: var(--space-2);
+        }
+
+        .preset-item:last-child {
+          margin-bottom: 0;
+        }
+
+        .preset-item.hidden {
+          opacity: 0.5;
+        }
+
+        .preset-item-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .preset-item-name {
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-primary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .preset-item-description {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .preset-item-badge {
+          font-size: var(--text-xs);
+          padding: 2px 6px;
+          background: var(--color-primary-dim);
+          color: var(--color-primary);
+          border-radius: var(--radius-sm);
+          white-space: nowrap;
+        }
+
+        .preset-item-badge.custom {
+          background: var(--color-success);
+          background: rgba(34, 197, 94, 0.1);
+          color: var(--color-success);
+        }
+
+        .preset-item-actions {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          flex-shrink: 0;
+        }
+
+        .preset-action-btn {
+          padding: var(--space-1) var(--space-2);
+          background: transparent;
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          font-size: var(--text-xs);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+        }
+
+        .preset-action-btn:hover {
+          background: var(--color-surface-hover);
+          color: var(--color-text-primary);
+          border-color: var(--color-border-strong);
+        }
+
+        .preset-action-btn.clone:hover {
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .preset-action-btn.edit:hover {
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .preset-action-btn.delete:hover {
+          border-color: var(--color-error);
+          color: var(--color-error);
+        }
+
+        .create-preset-btn {
+          width: 100%;
+          padding: var(--space-3);
+          background: var(--color-primary-dim);
+          border: 1px dashed var(--color-primary);
+          border-radius: var(--radius-md);
+          color: var(--color-primary);
+          font-weight: var(--font-medium);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          margin-top: var(--space-4);
+        }
+
+        .create-preset-btn:hover {
+          background: var(--color-primary);
+          color: white;
+          border-style: solid;
+        }
       </style>
 
       <div class="settings-header">
@@ -735,6 +1023,54 @@ export class SettingsPanel extends HTMLElement {
           </div>
         </div>
 
+        <!-- Agent Presets Section -->
+        <div class="section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            Agent Presets
+          </div>
+          <div class="form-hint" style="margin-bottom: var(--space-3);">
+            Manage which agent presets appear when creating conversations. Toggle categories or individual presets.
+          </div>
+
+          <!-- Category Toggles -->
+          <div class="agents-subsection">
+            <div class="agents-subsection-title">Categories</div>
+            <div class="category-grid">
+              ${presetCategories.map(cat => {
+                const isHidden = this.settings!.hiddenCategories.includes(cat.id);
+                return `
+                  <div class="category-toggle ${isHidden ? 'hidden' : ''}" data-category-id="${cat.id}">
+                    <div class="category-info">
+                      <span class="category-icon">${cat.icon}</span>
+                      <span>${cat.name}</span>
+                    </div>
+                    <label class="mini-toggle">
+                      <input type="checkbox" class="category-visibility-toggle" data-category="${cat.id}" ${!isHidden ? 'checked' : ''}>
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- Preset List -->
+          <div class="agents-subsection">
+            <div class="agents-subsection-title">All Presets</div>
+            <div class="preset-list">
+              ${this.renderPresetsByCategory()}
+            </div>
+          </div>
+
+          <button class="create-preset-btn" id="create-preset-btn">+ Create Custom Preset</button>
+        </div>
+
         <!-- Conversation Languages Section -->
         <div class="section">
           <div class="section-title">
@@ -825,6 +1161,9 @@ export class SettingsPanel extends HTMLElement {
           </div>
         </div>
       </div>
+
+      <!-- Agent Preset Editor Modal (Web Component) -->
+      <agent-preset-editor-modal id="preset-editor-modal"></agent-preset-editor-modal>
     `;
 
     this.setupEventHandlers();
@@ -837,6 +1176,113 @@ export class SettingsPanel extends HTMLElement {
       case 'ollama': return 'Ollama Format';
       default: return format;
     }
+  }
+
+  private renderPresetsByCategory(): string {
+    // Group presets by category
+    const grouped = new Map<string, AgentPreset[]>();
+    
+    for (const category of presetCategories) {
+      grouped.set(category.id, []);
+    }
+    
+    for (const preset of this.presets) {
+      const categoryPresets = grouped.get(preset.category);
+      if (categoryPresets) {
+        categoryPresets.push(preset);
+      } else {
+        // If preset has unknown category, add to 'custom'
+        const customPresets = grouped.get('custom') || [];
+        customPresets.push(preset);
+        grouped.set('custom', customPresets);
+      }
+    }
+
+    // Auto-expand first category with presets if none expanded
+    if (this.expandedAgentCategories.size === 0) {
+      for (const [categoryId, categoryPresets] of grouped) {
+        if (categoryPresets.length > 0) {
+          this.expandedAgentCategories.add(categoryId);
+          break;
+        }
+      }
+    }
+
+    return presetCategories
+      .map(category => {
+        const categoryPresets = grouped.get(category.id) || [];
+        if (categoryPresets.length === 0) return '';
+        
+        const isExpanded = this.expandedAgentCategories.has(category.id);
+        const isCategoryHidden = this.settings!.hiddenCategories.includes(category.id);
+        
+        return `
+          <div class="preset-category-section" data-category="${category.id}">
+            <div class="preset-category-header ${isExpanded ? 'expanded' : ''}" data-category="${category.id}">
+              <div class="preset-category-title">
+                <span>${category.icon}</span>
+                <span>${category.name}</span>
+                <span class="preset-category-count">${categoryPresets.length}</span>
+              </div>
+              <svg class="preset-category-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </div>
+            <div class="preset-category-content ${isExpanded ? 'expanded' : ''}">
+              ${categoryPresets.map(preset => {
+                const isHidden = this.settings!.hiddenPresets.includes(preset.id) || isCategoryHidden;
+                return `
+                  <div class="preset-item ${isHidden ? 'hidden' : ''}" data-preset-id="${preset.id}">
+                    <div class="preset-item-info">
+                      <div class="preset-item-name">${this.escapeHtml(preset.name)}</div>
+                      <div class="preset-item-description">${this.escapeHtml(preset.description)}</div>
+                    </div>
+                    ${preset.isBuiltIn 
+                      ? '<span class="preset-item-badge">Built-in</span>' 
+                      : '<span class="preset-item-badge custom">Custom</span>'
+                    }
+                    <div class="preset-item-actions">
+                      <label class="mini-toggle" title="${isHidden ? 'Show preset' : 'Hide preset'}">
+                        <input type="checkbox" class="preset-visibility-toggle" data-preset="${preset.id}" ${!isHidden && !isCategoryHidden ? 'checked' : ''} ${isCategoryHidden ? 'disabled' : ''}>
+                        <span class="toggle-slider"></span>
+                      </label>
+                      ${preset.isBuiltIn ? `
+                        <button class="preset-action-btn clone" data-preset="${preset.id}" title="Clone as custom preset">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                          </svg>
+                          Clone
+                        </button>
+                      ` : `
+                        <button class="preset-action-btn edit" data-preset="${preset.id}" title="Edit preset">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                          </svg>
+                          Edit
+                        </button>
+                        <button class="preset-action-btn delete" data-preset="${preset.id}" title="Delete preset">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                          </svg>
+                        </button>
+                      `}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      }).join('');
+  }
+
+  private escapeHtml(str: string): string {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
   }
 
   private getApiKeyHint(format: ApiFormat): string {
@@ -1073,6 +1519,161 @@ export class SettingsPanel extends HTMLElement {
         }
       });
     });
+
+    // === Agent Presets Event Handlers ===
+
+    // Category visibility toggles
+    this.shadowRoot?.querySelectorAll('.category-visibility-toggle').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const checkbox = e.target as HTMLInputElement;
+        const categoryId = checkbox.dataset.category;
+        if (!categoryId || !this.settings) return;
+
+        const currentHidden = new Set(this.settings.hiddenCategories);
+        
+        if (checkbox.checked) {
+          currentHidden.delete(categoryId);
+        } else {
+          currentHidden.add(categoryId);
+        }
+
+        this.settings = await settingsStorage.update({
+          hiddenCategories: Array.from(currentHidden)
+        });
+
+        // Update UI
+        const toggleContainer = checkbox.closest('.category-toggle');
+        if (toggleContainer) {
+          toggleContainer.classList.toggle('hidden', !checkbox.checked);
+        }
+
+        // Re-render preset list to update visibility states
+        const presetListEl = this.shadowRoot?.querySelector('.preset-list');
+        if (presetListEl) {
+          presetListEl.innerHTML = this.renderPresetsByCategory();
+          this.setupPresetListHandlers();
+        }
+
+        eventBus.emit('settings:updated', this.settings!);
+      });
+    });
+
+    // Preset category expand/collapse
+    this.setupPresetListHandlers();
+
+    // Create preset button
+    this.shadowRoot?.getElementById('create-preset-btn')?.addEventListener('click', () => {
+      this.openPresetEditor('create');
+    });
+
+    // Listen for preset editor events
+    const presetEditorModal = this.shadowRoot?.getElementById('preset-editor-modal') as AgentPresetEditorModal;
+    presetEditorModal?.addEventListener('preset:saved', async () => {
+      await this.loadData();
+      this.render();
+    });
+  }
+
+  private setupPresetListHandlers() {
+    // Preset category expand/collapse
+    this.shadowRoot?.querySelectorAll('.preset-category-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const categoryId = header.getAttribute('data-category');
+        if (!categoryId) return;
+
+        const content = header.nextElementSibling;
+        const isExpanded = header.classList.contains('expanded');
+
+        if (isExpanded) {
+          this.expandedAgentCategories.delete(categoryId);
+          header.classList.remove('expanded');
+          content?.classList.remove('expanded');
+        } else {
+          this.expandedAgentCategories.add(categoryId);
+          header.classList.add('expanded');
+          content?.classList.add('expanded');
+        }
+      });
+    });
+
+    // Preset visibility toggles
+    this.shadowRoot?.querySelectorAll('.preset-visibility-toggle').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const checkbox = e.target as HTMLInputElement;
+        const presetId = checkbox.dataset.preset;
+        if (!presetId || !this.settings) return;
+
+        const currentHidden = new Set(this.settings.hiddenPresets);
+        
+        if (checkbox.checked) {
+          currentHidden.delete(presetId);
+        } else {
+          currentHidden.add(presetId);
+        }
+
+        this.settings = await settingsStorage.update({
+          hiddenPresets: Array.from(currentHidden)
+        });
+
+        // Update UI
+        const presetItem = checkbox.closest('.preset-item');
+        if (presetItem) {
+          presetItem.classList.toggle('hidden', !checkbox.checked);
+        }
+
+        eventBus.emit('settings:updated', this.settings!);
+      });
+    });
+
+    // Clone preset buttons
+    this.shadowRoot?.querySelectorAll('.preset-action-btn.clone').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const presetId = (btn as HTMLButtonElement).dataset.preset;
+        if (presetId) {
+          this.openPresetEditor('clone', presetId);
+        }
+      });
+    });
+
+    // Edit preset buttons
+    this.shadowRoot?.querySelectorAll('.preset-action-btn.edit').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const presetId = (btn as HTMLButtonElement).dataset.preset;
+        if (presetId) {
+          this.openPresetEditor('edit', presetId);
+        }
+      });
+    });
+
+    // Delete preset buttons
+    this.shadowRoot?.querySelectorAll('.preset-action-btn.delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const presetId = (btn as HTMLButtonElement).dataset.preset;
+        if (presetId && confirm('Are you sure you want to delete this custom preset?')) {
+          const deleted = await presetStorage.delete(presetId);
+          if (deleted) {
+            await this.loadData();
+            this.render();
+          }
+        }
+      });
+    });
+  }
+
+  private async openPresetEditor(mode: 'create' | 'edit' | 'clone', presetId?: string) {
+    const modal = this.shadowRoot?.getElementById('preset-editor-modal') as AgentPresetEditorModal;
+    if (!modal) return;
+
+    let preset: AgentPreset | undefined;
+    if (presetId) {
+      preset = await presetStorage.getById(presetId);
+    }
+
+    modal.configure({ mode, preset });
+    modal.setAttribute('open', 'true');
   }
 
   private showAddProviderModal() {

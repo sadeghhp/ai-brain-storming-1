@@ -144,6 +144,8 @@ export async function initializeDatabase(): Promise<void> {
       showKeyboardShortcuts: true,
       autoScrollMessages: true,
       enabledLanguages: ['', 'Persian'],
+      hiddenCategories: [],
+      hiddenPresets: [],
     });
   }
 

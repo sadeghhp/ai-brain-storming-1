@@ -1,11 +1,12 @@
 // ============================================
 // AI Brainstorm - Conversation View Component
-// Version: 2.3.0
+// Version: 2.4.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
 import { eventBus } from '../utils/event-bus';
 import { downloadConversation } from '../utils/export';
+import { isLockedByOtherTab } from '../utils/conversation-lock';
 import './message-stream';
 import './agent-roster';
 import './control-bar';
@@ -19,6 +20,8 @@ import './round-progress';
 export class ConversationView extends HTMLElement {
   private engine: ConversationEngine | null = null;
   private conversationId: string | null = null;
+  private isLocked: boolean = false;
+  private lockCheckInterval: number | null = null;
   private onExportDocumentClick: ((e: MouseEvent) => void) | null = null;
   private onExportDocumentKeydown: ((e: KeyboardEvent) => void) | null = null;
 
@@ -54,9 +57,20 @@ export class ConversationView extends HTMLElement {
       document.removeEventListener('keydown', this.onExportDocumentKeydown);
       this.onExportDocumentKeydown = null;
     }
+    // Cleanup lock polling interval
+    if (this.lockCheckInterval) {
+      clearInterval(this.lockCheckInterval);
+      this.lockCheckInterval = null;
+    }
   }
 
   private async loadConversation() {
+    // Clear any existing lock check interval
+    if (this.lockCheckInterval) {
+      clearInterval(this.lockCheckInterval);
+      this.lockCheckInterval = null;
+    }
+
     this.conversationId = this.getAttribute('conversation-id');
     if (!this.conversationId) {
       this.renderEmpty();
@@ -69,7 +83,40 @@ export class ConversationView extends HTMLElement {
       return;
     }
 
+    // Check if this conversation is locked by another tab
+    this.isLocked = await isLockedByOtherTab(this.conversationId);
+    
+    // Set up periodic lock check if locked (to detect when lock is released)
+    if (this.isLocked) {
+      this.startLockPolling();
+    }
+
     this.renderConversation();
+  }
+
+  /**
+   * Start polling for lock status changes
+   * When the other tab releases the lock, we refresh to enable controls
+   */
+  private startLockPolling(): void {
+    if (this.lockCheckInterval) return;
+    
+    this.lockCheckInterval = window.setInterval(async () => {
+      if (!this.conversationId) return;
+      
+      const stillLocked = await isLockedByOtherTab(this.conversationId);
+      if (!stillLocked && this.isLocked) {
+        // Lock was released, refresh the view
+        console.log('[ConversationView] Lock released, refreshing view');
+        this.isLocked = false;
+        if (this.lockCheckInterval) {
+          clearInterval(this.lockCheckInterval);
+          this.lockCheckInterval = null;
+        }
+        // Reload to get fresh state and enable controls
+        this.loadConversation();
+      }
+    }, 2000); // Check every 2 seconds
   }
 
   private setupEventListeners() {
@@ -116,6 +163,12 @@ export class ConversationView extends HTMLElement {
     if (controlBar && this.engine) {
       const status = this.engine.getStatus();
       controlBar.setAttribute('status', status);
+      // Update locked state
+      if (this.isLocked) {
+        controlBar.setAttribute('locked', 'true');
+      } else {
+        controlBar.removeAttribute('locked');
+      }
       // Update host data attribute for conditional styling
       this.setAttribute('data-status', status);
     }
@@ -543,6 +596,33 @@ export class ConversationView extends HTMLElement {
         :host([data-status="running"]) turn-queue {
           display: block;
         }
+
+        /* Locked banner - shown when conversation is running in another tab */
+        .locked-banner {
+          display: flex;
+          align-items: center;
+          gap: var(--space-3);
+          padding: var(--space-3) var(--space-6);
+          background: rgba(245, 158, 11, 0.1);
+          border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+          color: var(--color-warning);
+          font-size: var(--text-sm);
+        }
+
+        .locked-banner svg {
+          width: 18px;
+          height: 18px;
+          flex-shrink: 0;
+        }
+
+        .locked-banner-text {
+          flex: 1;
+        }
+
+        .locked-banner-hint {
+          color: var(--color-text-tertiary);
+          font-size: var(--text-xs);
+        }
       </style>
 
       <header class="conversation-header">
@@ -610,6 +690,19 @@ export class ConversationView extends HTMLElement {
 
       <turn-queue conversation-id="${conversation.id}"></turn-queue>
 
+      ${this.isLocked ? `
+      <div class="locked-banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <div class="locked-banner-text">
+          This conversation is running in another tab
+          <div class="locked-banner-hint">Controls are disabled. Close the other tab or wait for it to finish.</div>
+        </div>
+      </div>
+      ` : ''}
+
       <agent-roster conversation-id="${conversation.id}"></agent-roster>
 
       <div class="main-content">
@@ -650,6 +743,7 @@ export class ConversationView extends HTMLElement {
         <control-bar 
           conversation-id="${conversation.id}" 
           status="${conversation.status}"
+          ${this.isLocked ? 'locked="true"' : ''}
         ></control-bar>
       </div>
     `;

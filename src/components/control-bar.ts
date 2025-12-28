@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Control Bar Component
-// Version: 1.2.0
+// Version: 1.3.0
 // ============================================
 
 import type { ConversationStatus } from '../types';
@@ -10,9 +10,10 @@ import type { ConfirmationModal } from './confirmation-modal';
 export class ControlBar extends HTMLElement {
   private status: ConversationStatus = 'idle';
   private speedMs: number = 2000;
+  private locked: boolean = false;
 
   static get observedAttributes() {
-    return ['status', 'speed'];
+    return ['status', 'speed', 'locked'];
   }
 
   constructor() {
@@ -32,6 +33,10 @@ export class ControlBar extends HTMLElement {
     if (name === 'speed') {
       this.speedMs = parseInt(newValue) || 2000;
       this.updateSpeed();
+    }
+    if (name === 'locked') {
+      this.locked = newValue === 'true';
+      this.updateButtons();
     }
   }
 
@@ -173,6 +178,10 @@ export class ControlBar extends HTMLElement {
           background: var(--color-primary);
         }
 
+        .status-dot.locked {
+          background: var(--color-warning);
+        }
+
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
@@ -182,6 +191,10 @@ export class ControlBar extends HTMLElement {
           font-size: var(--text-sm);
           color: var(--color-text-secondary);
           text-transform: capitalize;
+        }
+
+        .status-text.locked {
+          color: var(--color-warning);
         }
       </style>
 
@@ -291,6 +304,27 @@ export class ControlBar extends HTMLElement {
 
     if (!playBtn || !pauseBtn || !stopBtn || !resetBtn) return;
 
+    // If locked by another tab, disable all control buttons
+    if (this.locked) {
+      playBtn.disabled = true;
+      pauseBtn.disabled = true;
+      stopBtn.disabled = true;
+      resetBtn.disabled = true;
+      playBtn.title = 'Running in another tab';
+      
+      // Update status indicator to show locked state
+      const statusDot = this.shadowRoot?.querySelector('.status-dot');
+      const statusText = this.shadowRoot?.querySelector('.status-text');
+      if (statusDot) {
+        statusDot.className = 'status-dot locked';
+      }
+      if (statusText) {
+        statusText.textContent = 'locked';
+        statusText.className = 'status-text locked';
+      }
+      return;
+    }
+
     switch (this.status) {
       case 'idle':
         playBtn.disabled = false;
@@ -337,6 +371,7 @@ export class ControlBar extends HTMLElement {
     }
     if (statusText) {
       statusText.textContent = this.status;
+      statusText.className = 'status-text';
     }
   }
 

@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Storage Manager
-// Version: 2.3.0
+// Version: 2.4.0
 // ============================================
 
 import { v4 as uuidv4 } from 'uuid';
@@ -853,11 +853,21 @@ export const settingsStorage = {
         showKeyboardShortcuts: true,
         autoScrollMessages: true,
         enabledLanguages: ['', 'Persian'], // Default: English + Persian (empty string = English)
+        hiddenCategories: [], // No categories hidden by default
+        hiddenPresets: [], // No presets hidden by default
       };
     }
     // Ensure enabledLanguages exists for older stored settings
     if (!settings.enabledLanguages) {
       settings.enabledLanguages = [''];
+    }
+    // Ensure hiddenCategories exists for older stored settings
+    if (!settings.hiddenCategories) {
+      settings.hiddenCategories = [];
+    }
+    // Ensure hiddenPresets exists for older stored settings
+    if (!settings.hiddenPresets) {
+      settings.hiddenPresets = [];
     }
     return settings;
   },
