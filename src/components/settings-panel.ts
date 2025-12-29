@@ -10,7 +10,7 @@ import { mcpRouter } from '../mcp';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { ALL_LANGUAGES } from '../utils/languages';
-import { downloadPresets, importPresets, downloadSelectedPresets, downloadMCPServers, importMCPServers } from '../utils/export';
+import { downloadPresets, importPresets, downloadSelectedPresets, downloadMCPServers, importMCPServers, normalizeMCPServerImport } from '../utils/export';
 import { readFileContent } from '../utils/helpers';
 import type { AppSettings, LLMProvider, ApiFormat, AgentPreset, MCPServer, MCPTransport, MCPImportConflictStrategy } from '../types';
 import './agent-preset-editor-modal';
@@ -28,6 +28,7 @@ export class SettingsPanel extends HTMLElement {
   private selectedPresetIds: Set<string> = new Set();
   private selectedProviderId: string | null = null;
   private selectedMcpServerId: string | null = null;
+  private connectingServerId: string | null = null;
   private languageFilter: string = '';
 
   constructor() {
@@ -617,6 +618,19 @@ export class SettingsPanel extends HTMLElement {
 
         .status-dot.connected {
           background: var(--color-success);
+          box-shadow: 0 0 4px var(--color-success);
+        }
+
+        .status-dot.connecting {
+          background: var(--color-warning);
+          box-shadow: 0 0 4px var(--color-warning);
+          animation: status-pulse 1.5s infinite;
+        }
+
+        @keyframes status-pulse {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.2); }
+          100% { opacity: 1; transform: scale(1); }
         }
 
         .test-btn {
@@ -857,7 +871,7 @@ export class SettingsPanel extends HTMLElement {
           display: flex;
           flex-direction: column;
           gap: var(--space-2);
-          max-height: 200px;
+          max-height: 400px;
           overflow-y: auto;
           padding: var(--space-2);
           background: var(--color-surface);
@@ -870,6 +884,24 @@ export class SettingsPanel extends HTMLElement {
           background: var(--color-bg-primary);
           border: 1px solid var(--color-border);
           border-radius: var(--radius-sm);
+          cursor: pointer;
+          transition: border-color 0.15s ease;
+        }
+
+        .mcp-tool-item:hover {
+          border-color: var(--color-accent);
+        }
+
+        .mcp-tool-item[data-expanded="true"] {
+          border-color: var(--color-accent);
+          background: var(--color-surface);
+        }
+
+        .mcp-tool-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--space-2);
         }
 
         .mcp-tool-name {
@@ -879,10 +911,99 @@ export class SettingsPanel extends HTMLElement {
           font-family: var(--font-mono, monospace);
         }
 
+        .mcp-tool-toggle {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          transition: transform 0.15s ease;
+        }
+
+        .mcp-tool-item[data-expanded="true"] .mcp-tool-toggle {
+          transform: rotate(90deg);
+        }
+
         .mcp-tool-description {
           font-size: var(--text-xs);
           color: var(--color-text-tertiary);
           margin-top: var(--space-1);
+          line-height: 1.4;
+        }
+
+        .mcp-tool-params {
+          display: none;
+          margin-top: var(--space-3);
+          padding-top: var(--space-3);
+          border-top: 1px solid var(--color-border);
+        }
+
+        .mcp-tool-item[data-expanded="true"] .mcp-tool-params {
+          display: block;
+        }
+
+        .mcp-tool-params-title {
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          color: var(--color-text-secondary);
+          margin-bottom: var(--space-2);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+
+        .mcp-param-item {
+          display: flex;
+          align-items: flex-start;
+          gap: var(--space-2);
+          padding: var(--space-2);
+          background: var(--color-bg-primary);
+          border-radius: var(--radius-sm);
+          margin-bottom: var(--space-1);
+        }
+
+        .mcp-param-name {
+          font-family: var(--font-mono, monospace);
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          color: var(--color-accent);
+          min-width: 100px;
+        }
+
+        .mcp-param-type {
+          font-family: var(--font-mono, monospace);
+          font-size: var(--text-xs);
+          color: var(--color-warning);
+          background: rgba(245, 158, 11, 0.1);
+          padding: 1px 6px;
+          border-radius: var(--radius-sm);
+        }
+
+        .mcp-param-required {
+          font-size: 10px;
+          font-weight: var(--font-medium);
+          color: var(--color-error);
+          background: rgba(239, 68, 68, 0.1);
+          padding: 1px 6px;
+          border-radius: var(--radius-sm);
+          text-transform: uppercase;
+        }
+
+        .mcp-param-optional {
+          font-size: 10px;
+          font-weight: var(--font-medium);
+          color: var(--color-text-tertiary);
+          background: var(--color-surface);
+          padding: 1px 6px;
+          border-radius: var(--radius-sm);
+        }
+
+        .mcp-param-desc {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          flex: 1;
+        }
+
+        .mcp-no-params {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          font-style: italic;
         }
 
         .btn-small {
@@ -2149,7 +2270,12 @@ export class SettingsPanel extends HTMLElement {
                 Import
               </button>
             </div>
-            <input type="file" id="import-mcp-file-input" accept=".json" style="display: none;">
+            <input
+              type="file"
+              id="import-mcp-file-input"
+              accept=".json"
+              style="position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0;"
+            >
           </div>
         </div>
 
@@ -2175,6 +2301,7 @@ export class SettingsPanel extends HTMLElement {
 
   private renderMCPServerDetails(server: MCPServer): string {
     const isConnected = mcpRouter.isConnected(server.id);
+    const isConnecting = this.connectingServerId === server.id;
     
     const transportLabel = server.transport === 'streamable-http' 
       ? 'Streamable HTTP Transport' 
@@ -2191,8 +2318,8 @@ export class SettingsPanel extends HTMLElement {
           </div>
         </div>
         <div class="details-status">
-          <span class="status-dot ${isConnected ? 'connected' : ''}"></span>
-          <span>${isConnected ? 'Connected' : (server.lastError ? 'Error' : 'Disconnected')}</span>
+          <span class="status-dot ${isConnected ? 'connected' : (isConnecting ? 'connecting' : '')}"></span>
+          <span>${isConnected ? 'Connected' : (isConnecting ? 'Connecting...' : (server.lastError ? 'Error' : 'Disconnected'))}</span>
         </div>
       </div>
 
@@ -2285,12 +2412,40 @@ export class SettingsPanel extends HTMLElement {
         </div>
         ${server.tools.length > 0 ? `
           <div class="mcp-tools-list">
-            ${server.tools.map((tool: { name: string; description: string }) => `
-              <div class="mcp-tool-item">
-                <div class="mcp-tool-name">${tool.name}</div>
+            ${server.tools.map((tool: { name: string; description: string; inputSchema?: Record<string, unknown> }) => {
+              // Parse inputSchema to extract parameters
+              const schema = tool.inputSchema || {};
+              const properties = (schema.properties || {}) as Record<string, { type?: string; description?: string }>;
+              const required = (schema.required || []) as string[];
+              const paramNames = Object.keys(properties);
+              
+              return `
+              <div class="mcp-tool-item" data-expanded="false" data-tool-name="${tool.name}">
+                <div class="mcp-tool-header">
+                  <span class="mcp-tool-name">${tool.name}</span>
+                  <span class="mcp-tool-toggle">▶</span>
+                </div>
                 <div class="mcp-tool-description">${tool.description || 'No description'}</div>
-              </div>
-            `).join('')}
+                <div class="mcp-tool-params">
+                  <div class="mcp-tool-params-title">Parameters</div>
+                  ${paramNames.length > 0 ? paramNames.map(paramName => {
+                    const param = properties[paramName] || {};
+                    const isRequired = required.includes(paramName);
+                    const paramType = param.type || 'any';
+                    const paramDesc = param.description || '';
+                    return `
+                    <div class="mcp-param-item">
+                      <span class="mcp-param-name">${paramName}</span>
+                      <span class="mcp-param-type">${paramType}</span>
+                      ${isRequired 
+                        ? '<span class="mcp-param-required">required</span>' 
+                        : '<span class="mcp-param-optional">optional</span>'}
+                      ${paramDesc ? `<span class="mcp-param-desc">${paramDesc}</span>` : ''}
+                    </div>`;
+                  }).join('') : '<div class="mcp-no-params">No parameters required</div>'}
+                </div>
+              </div>`;
+            }).join('')}
           </div>
         ` : `
           <div style="padding: var(--space-4); text-align: center; color: var(--color-text-tertiary); font-size: var(--text-sm);">
@@ -2309,12 +2464,22 @@ export class SettingsPanel extends HTMLElement {
             Disconnect
           </button>
         ` : `
-          <button class="test-btn connect-mcp-btn" data-mcp-server="${server.id}">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: var(--space-2);">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-            Connect
-          </button>
+          ${isConnecting ? `
+            <button class="test-btn stop-connect-mcp-btn" data-mcp-server="${server.id}" style="background: var(--color-warning);">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: var(--space-2);">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+              Stop
+            </button>
+          ` : `
+            <button class="test-btn connect-mcp-btn" data-mcp-server="${server.id}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: var(--space-2);">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              Connect
+            </button>
+          `}
         `}
         <button class="delete-provider-btn delete-mcp-btn" data-mcp-server="${server.id}" style="margin-left: auto;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: var(--space-2);">
@@ -2607,7 +2772,16 @@ export class SettingsPanel extends HTMLElement {
 
     // Import MCP Servers button
     this.shadowRoot?.getElementById('import-mcp-servers-btn')?.addEventListener('click', () => {
-      this.shadowRoot?.getElementById('import-mcp-file-input')?.click();
+      const input = this.shadowRoot?.getElementById('import-mcp-file-input') as HTMLInputElement | null;
+      if (!input) return;
+      // Some browsers won't open the file picker if the input is `display:none`.
+      // Prefer showPicker() where available, otherwise fall back to click().
+      const anyInput = input as any;
+      if (typeof anyInput.showPicker === 'function') {
+        anyInput.showPicker();
+      } else {
+        input.click();
+      }
     });
 
     // Import MCP file input change
@@ -2653,6 +2827,16 @@ export class SettingsPanel extends HTMLElement {
       });
     });
 
+    // Stop connecting MCP server buttons
+    this.shadowRoot?.querySelectorAll('.stop-connect-mcp-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const serverId = (e.currentTarget as HTMLButtonElement).dataset.mcpServer;
+        if (serverId) {
+          this.handleStopConnectMCPServer(serverId);
+        }
+      });
+    });
+
     // Disconnect MCP server buttons
     this.shadowRoot?.querySelectorAll('.disconnect-mcp-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
@@ -2681,6 +2865,15 @@ export class SettingsPanel extends HTMLElement {
         if (serverId) {
           await this.handleRefreshMCPTools(serverId);
         }
+      });
+    });
+
+    // MCP tool item expand/collapse toggle
+    this.shadowRoot?.querySelectorAll('.mcp-tool-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        const toolItem = e.currentTarget as HTMLElement;
+        const isExpanded = toolItem.dataset.expanded === 'true';
+        toolItem.dataset.expanded = isExpanded ? 'false' : 'true';
       });
     });
 
@@ -2735,8 +2928,10 @@ export class SettingsPanel extends HTMLElement {
       input.addEventListener('change', async (e) => {
         const serverId = (e.target as HTMLInputElement).dataset.mcpServer;
         const useDevProxy = (e.target as HTMLInputElement).checked;
+        console.log('[Settings] Proxy checkbox changed:', { serverId, useDevProxy });
         if (serverId) {
           await mcpServerStorage.update(serverId, { useDevProxy });
+          console.log('[Settings] Saved useDevProxy to storage');
         }
       });
     });
@@ -3493,22 +3688,34 @@ export class SettingsPanel extends HTMLElement {
   }
 
   private async handleConnectMCPServer(serverId: string) {
-    const btn = this.shadowRoot?.querySelector(`.connect-mcp-btn[data-mcp-server="${serverId}"]`) as HTMLButtonElement;
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = 'Connecting...';
-    }
+    // Set connecting state and re-render to show "Stop" button
+    this.connectingServerId = serverId;
+    this.render();
 
     try {
       await mcpRouter.connect(serverId);
+      this.connectingServerId = null;
       await this.loadData();
       this.render();
     } catch (error) {
+      this.connectingServerId = null;
       const message = error instanceof Error ? error.message : 'Unknown error';
-      alert(`Failed to connect: ${message}`);
+      
+      // Don't show alert for abort - that's user-initiated
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        // Update the server with the error for display
+        await mcpServerStorage.setError(serverId, message);
+      }
+      
       await this.loadData();
       this.render();
     }
+  }
+
+  private handleStopConnectMCPServer(serverId: string) {
+    mcpRouter.abortConnection(serverId);
+    this.connectingServerId = null;
+    this.render();
   }
 
   private async handleDisconnectMCPServer(serverId: string) {
@@ -3572,28 +3779,22 @@ export class SettingsPanel extends HTMLElement {
     try {
       const content = await readFileContent(file);
       
-      // Validate JSON structure
-      let data: { servers?: Array<{ name: string }> };
+      let servers: Array<{ name: string }> = [];
       try {
-        data = JSON.parse(content);
+        servers = normalizeMCPServerImport(content);
       } catch {
         alert('Invalid JSON file');
         return;
       }
 
-      if (!data.servers || !Array.isArray(data.servers)) {
-        alert('Invalid MCP server export format. Expected a JSON file with a "servers" array.');
-        return;
-      }
-
-      if (data.servers.length === 0) {
+      if (servers.length === 0) {
         alert('No servers found in the import file');
         return;
       }
 
       // Check for potential name conflicts
       const existingNames = new Set(this.mcpServers.map(s => s.name.toLowerCase()));
-      const importNames = data.servers.map(s => s.name || '');
+      const importNames = servers.map(s => s.name || '');
       const conflicts = importNames.filter(name => existingNames.has(name.toLowerCase()));
 
       // Store content for later use
@@ -3604,7 +3805,7 @@ export class SettingsPanel extends HTMLElement {
       if (messageEl) {
         if (conflicts.length > 0) {
           messageEl.innerHTML = `
-            <p>Found <strong>${data.servers.length}</strong> server(s) to import.</p>
+            <p>Found <strong>${servers.length}</strong> server(s) to import.</p>
             <p style="margin-top: var(--space-2); color: var(--color-warning);">
               <strong>${conflicts.length}</strong> server(s) have names that already exist: 
               <em>${conflicts.slice(0, 3).join(', ')}${conflicts.length > 3 ? '...' : ''}</em>
@@ -3612,7 +3813,7 @@ export class SettingsPanel extends HTMLElement {
           `;
         } else {
           messageEl.innerHTML = `
-            <p>Found <strong>${data.servers.length}</strong> server(s) to import.</p>
+            <p>Found <strong>${servers.length}</strong> server(s) to import.</p>
             <p style="margin-top: var(--space-2); color: var(--color-success);">No name conflicts detected.</p>
           `;
         }

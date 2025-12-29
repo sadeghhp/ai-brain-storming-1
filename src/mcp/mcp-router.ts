@@ -46,6 +46,28 @@ class MCPRouterService {
       throw new Error(`MCP server not found: ${serverId}`);
     }
 
+    // #region agent log
+    console.log('[MCPRouter] Server config:', { name: server.name, endpoint: server.endpoint, useDevProxy: server.useDevProxy });
+    // #endregion
+
+    // Auto-enable dev proxy for external HTTPS when on local dev to avoid CORS
+    const shouldAutoProxy = !server.useDevProxy && typeof window !== 'undefined' && window.location?.hostname && (() => {
+      try {
+        const host = window.location.hostname.toLowerCase();
+        const isLocal = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.endsWith('.local');
+        const url = server.endpoint ? new URL(server.endpoint, window.location.origin) : null;
+        const isExternalHttps = url ? (url.protocol === 'https:' && !(url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname.startsWith('192.168.') || url.hostname.endsWith('.local'))) : false;
+        return isLocal && isExternalHttps;
+      } catch {
+        return false;
+      }
+    })();
+    if (shouldAutoProxy) {
+      server.useDevProxy = true;
+      await mcpServerStorage.update(serverId, { useDevProxy: true });
+      console.log('[MCPRouter] Auto-enabled dev proxy for external HTTPS endpoint in dev:', server.endpoint);
+    }
+
     // Check if already connected
     const existingClient = this.clients.get(serverId);
     if (existingClient?.isConnected()) {
@@ -54,6 +76,8 @@ class MCPRouterService {
 
     try {
       const client = createMCPClient(server);
+      // Store client early so it can be aborted during connect/init
+      this.clients.set(serverId, client);
       
       // Set up event handlers
       client.on('disconnected', () => {
@@ -91,6 +115,13 @@ class MCPRouterService {
       return updatedServer;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Don't log or update storage if it was a deliberate abort
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log(`[MCPRouter] Connection to ${server.name} was aborted`);
+        throw error;
+      }
+
       console.error(`[MCPRouter] Failed to connect to ${server.name}:`, error);
       
       // Update server with error
@@ -98,6 +129,18 @@ class MCPRouterService {
       
       eventBus.emit('mcp:server-error', { serverId, error: errorMessage });
       throw error;
+    }
+  }
+
+  /**
+   * Abort an ongoing connection attempt
+   */
+  abortConnection(serverId: string): void {
+    const client = this.clients.get(serverId);
+    if (client && !client.isConnected()) {
+      client.abort();
+      this.clients.delete(serverId);
+      console.log(`[MCPRouter] Aborted connection to server ${serverId}`);
     }
   }
 

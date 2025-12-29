@@ -25,43 +25,11 @@ export default defineConfig({
       // Dev-only: MCP server proxy to avoid CORS issues
       // Browser calls: http://localhost:3000/mcp-proxy/aitools.emofid.com/mcp
       // Vite forwards to: https://aitools.emofid.com/mcp
-      '/mcp-proxy': {
-        target: 'https://placeholder.local',
+      '/mcp-proxy/aitools.emofid.com': {
+        target: 'https://aitools.emofid.com',
         changeOrigin: true,
         secure: true,
-        configure: (proxy, _options) => {
-          proxy.on('proxyReq', (proxyReq, req, _res) => {
-            // Extract the target host from the URL path
-            // /mcp-proxy/aitools.emofid.com/mcp -> https://aitools.emofid.com/mcp
-            const pathParts = req.url?.split('/mcp-proxy/')[1];
-            if (pathParts) {
-              const firstSlash = pathParts.indexOf('/');
-              const targetHost = firstSlash > 0 ? pathParts.substring(0, firstSlash) : pathParts;
-              const targetPath = firstSlash > 0 ? pathParts.substring(firstSlash) : '/';
-              proxyReq.setHeader('host', targetHost);
-              proxyReq.path = targetPath;
-            }
-          });
-        },
-        router: (req) => {
-          // Dynamic routing based on the path
-          const pathParts = req.url?.split('/mcp-proxy/')[1];
-          if (pathParts) {
-            const firstSlash = pathParts.indexOf('/');
-            const targetHost = firstSlash > 0 ? pathParts.substring(0, firstSlash) : pathParts;
-            return `https://${targetHost}`;
-          }
-          return 'https://localhost';
-        },
-        rewrite: (path) => {
-          // /mcp-proxy/aitools.emofid.com/mcp -> /mcp
-          const pathParts = path.split('/mcp-proxy/')[1];
-          if (pathParts) {
-            const firstSlash = pathParts.indexOf('/');
-            return firstSlash > 0 ? pathParts.substring(firstSlash) : '/';
-          }
-          return path;
-        },
+        rewrite: (path) => path.replace('/mcp-proxy/aitools.emofid.com', ''),
       },
     },
   },

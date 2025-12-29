@@ -55,6 +55,36 @@ export interface MCPClientEvents {
   toolsUpdated: (tools: MCPTool[]) => void;
 }
 
+function isExternalHttpsEndpoint(endpoint?: string): boolean {
+  if (!endpoint) return false;
+  try {
+    const url = new URL(endpoint, window.location.origin);
+    const host = url.hostname.toLowerCase();
+    const isLocal =
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.startsWith('192.168.') ||
+      host.endsWith('.local');
+    return url.protocol === 'https:' && !isLocal;
+  } catch {
+    return false;
+  }
+}
+
+function isLocalDevHost(): boolean {
+  try {
+    const host = window.location.hostname.toLowerCase();
+    return (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.startsWith('192.168.') ||
+      host.endsWith('.local')
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ============================================
 // Base MCP Client
 // ============================================
@@ -64,6 +94,7 @@ export abstract class BaseMCPClient {
   protected connected: boolean = false;
   protected requestId: number = 0;
   protected eventHandlers: Map<keyof MCPClientEvents, Set<Function>> = new Map();
+  protected abortController: AbortController = new AbortController();
 
   constructor(server: MCPServer) {
     this.server = server;
@@ -78,6 +109,14 @@ export abstract class BaseMCPClient {
    * Disconnect from the MCP server
    */
   abstract disconnect(): Promise<void>;
+
+  /**
+   * Abort any ongoing connection or initialization attempts
+   */
+  abort(): void {
+    this.abortController.abort();
+    this.abortController = new AbortController(); // Reset for future use
+  }
 
   /**
    * Send a request to the MCP server
@@ -224,12 +263,18 @@ export class HttpMCPClient extends BaseMCPClient {
       throw new Error('HTTP MCP server requires an endpoint URL');
     }
     
+    console.log('[HttpMCPClient] Constructor:', { name: server.name, useDevProxy: server.useDevProxy, originalEndpoint: server.endpoint });
+    const forceProxy = !server.useDevProxy && isLocalDevHost() && isExternalHttpsEndpoint(server.endpoint);
+    const shouldProxy = server.useDevProxy || forceProxy;
+    
     // Use dev proxy if enabled (for CORS bypass during development)
-    if (server.useDevProxy) {
+    if (shouldProxy) {
       this.endpoint = this.buildProxyUrl(server.endpoint);
     } else {
       this.endpoint = server.endpoint;
     }
+    
+    console.log('[HttpMCPClient] Final endpoint:', this.endpoint, ' (forceProxy=', forceProxy, ')');
     
     this.authToken = server.authToken;
     this.customHeaders = server.headers;
@@ -271,9 +316,20 @@ export class HttpMCPClient extends BaseMCPClient {
   private getSseUrl(): string {
     const baseUrl = `${this.endpoint}/sse`;
     if (this.authToken) {
-      const url = new URL(baseUrl);
-      url.searchParams.set('token', this.authToken);
-      return url.toString();
+      // Handle both absolute and relative URLs
+      try {
+        const url = new URL(baseUrl, window.location.origin);
+        url.searchParams.set('token', this.authToken);
+        // Return relative URL if it was relative, absolute if it was absolute
+        if (baseUrl.startsWith('/')) {
+          return url.pathname + url.search;
+        }
+        return url.toString();
+      } catch {
+        // Fallback: append token as query param manually
+        const separator = baseUrl.includes('?') ? '&' : '?';
+        return `${baseUrl}${separator}token=${encodeURIComponent(this.authToken)}`;
+      }
     }
     return baseUrl;
   }
@@ -288,6 +344,7 @@ export class HttpMCPClient extends BaseMCPClient {
         headers: this.getHeaders({
           'Accept': 'text/event-stream',
         }),
+        signal: this.abortController.signal,
       });
 
       if (!response.ok) {
@@ -403,6 +460,7 @@ export class HttpMCPClient extends BaseMCPClient {
         'Content-Type': 'application/json',
       }),
       body: JSON.stringify(request),
+      signal: this.abortController.signal,
     });
 
     if (!response.ok) {
@@ -452,12 +510,23 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
       throw new Error('Streamable HTTP MCP server requires an endpoint URL');
     }
     
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:456',message:'StreamableHttpMCPClient constructor',data:{serverName:server.name, useDevProxy:server.useDevProxy, originalEndpoint:server.endpoint},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
+    const forceProxy = !server.useDevProxy && isLocalDevHost() && isExternalHttpsEndpoint(server.endpoint);
+    const shouldProxy = server.useDevProxy || forceProxy;
+
     // Use dev proxy if enabled (for CORS bypass during development)
-    if (server.useDevProxy) {
+    if (shouldProxy) {
       this.endpoint = this.buildProxyUrl(server.endpoint);
     } else {
       this.endpoint = server.endpoint;
     }
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:468',message:'StreamableHttpMCPClient endpoint set',data:{endpoint:this.endpoint, forceProxy},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     
     // Build headers from custom headers and authToken
     this.customHeaders = { ...server.headers };
@@ -527,18 +596,32 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
       params,
     };
 
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:sendRequest',message:'Sending MCP request',data:{method,endpoint:this.endpoint,id},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT);
+
+      // Use AbortSignal.any if available (Chrome 116+, Firefox 114+, Safari 17+)
+      // Otherwise fallback to the timeout controller
+      const signal = (AbortSignal as any).any 
+        ? (AbortSignal as any).any([controller.signal, this.abortController.signal])
+        : controller.signal;
 
       const response = await fetch(this.endpoint, {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify(request),
-        signal: controller.signal,
+        signal,
       });
 
       clearTimeout(timeoutId);
+
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:afterFetch',message:'Got response',data:{status:response.status,statusText:response.statusText,contentType:response.headers.get('content-type')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
@@ -577,6 +660,9 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
 
       return { jsonrpc: '2.0', id, result: {} };
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:catchError',message:'Request failed',data:{errorName:(error as Error).name,errorMessage:(error as Error).message,method},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error(`Request timeout for method: ${method}`);
       }

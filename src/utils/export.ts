@@ -346,6 +346,133 @@ function prepareServerForExport(server: MCPServer): Omit<MCPServer, 'id' | 'isAc
   return exportable;
 }
 
+type ExportableMCPServer = Omit<MCPServer, 'id' | 'isActive' | 'tools' | 'lastConnectedAt' | 'lastError'>;
+
+type MCPServersMapFormat = {
+  mcpServers?: Record<string, {
+    transport?: MCPServer['transport'];
+    url?: string;
+    endpoint?: string;
+    authToken?: string;
+    headers?: Record<string, string>;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    useDevProxy?: boolean;
+  }>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Normalize supported import formats into our internal exportable server list.
+ * Supports:
+ * - Our export format: { servers: ExportableMCPServer[] }
+ * - Map format (common in other tools): { mcpServers: { [name]: { url/endpoint, transport, headers... } } }
+ */
+/**
+ * Check if an endpoint URL is external HTTPS (needs dev proxy for CORS)
+ */
+function shouldAutoEnableDevProxy(endpoint: string | undefined): boolean {
+  if (!endpoint) return false;
+  try {
+    const url = new URL(endpoint);
+    // Enable dev proxy for external HTTPS URLs (not localhost)
+    return url.protocol === 'https:' && 
+           !url.hostname.includes('localhost') && 
+           !url.hostname.includes('127.0.0.1');
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeMCPServerImport(jsonContent: string): ExportableMCPServer[] {
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'export.ts:normalizeMCPServerImport',message:'Starting normalization',data:{jsonSample:jsonContent.substring(0, 100)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
+  const parsed = JSON.parse(jsonContent) as unknown;
+
+  // Format A: { servers: [...] }
+  if (isRecord(parsed) && Array.isArray((parsed as any).servers)) {
+    const servers = (parsed as any).servers as unknown[];
+    const normalized = servers
+      .filter(s => isRecord(s))
+      .map((s): ExportableMCPServer | null => {
+        const name = typeof (s as any).name === 'string' ? (s as any).name : '';
+        const transport = (s as any).transport as MCPServer['transport'];
+        if (!name || (transport !== 'http' && transport !== 'streamable-http' && transport !== 'stdio')) return null;
+
+        // Accept both endpoint/url keys, but store in endpoint
+        const endpoint = typeof (s as any).endpoint === 'string'
+          ? (s as any).endpoint
+          : (typeof (s as any).url === 'string' ? (s as any).url : undefined);
+
+        const authToken = typeof (s as any).authToken === 'string' ? (s as any).authToken : undefined;
+        const headers = isRecord((s as any).headers) ? ((s as any).headers as Record<string, string>) : undefined;
+        const command = typeof (s as any).command === 'string' ? (s as any).command : undefined;
+        const args = Array.isArray((s as any).args) ? ((s as any).args as string[]) : undefined;
+        const env = isRecord((s as any).env) ? ((s as any).env as Record<string, string>) : undefined;
+        // Auto-enable dev proxy for external HTTPS endpoints (CORS bypass)
+        const useDevProxy = typeof (s as any).useDevProxy === 'boolean' 
+          ? (s as any).useDevProxy 
+          : shouldAutoEnableDevProxy(endpoint);
+
+        const out: ExportableMCPServer = {
+          name,
+          transport,
+          endpoint,
+          authToken,
+          headers,
+          command,
+          args,
+          env,
+          useDevProxy,
+        };
+        return out;
+      })
+      .filter((s): s is ExportableMCPServer => !!s);
+
+    return normalized;
+  }
+
+  // Format B: { mcpServers: { [name]: { url, transport, headers } } }
+  if (isRecord(parsed) && isRecord((parsed as any).mcpServers)) {
+    const map = (parsed as MCPServersMapFormat).mcpServers || {};
+    const normalized: ExportableMCPServer[] = [];
+    for (const [name, cfg] of Object.entries(map)) {
+      if (!cfg) continue;
+      const transport = (cfg.transport ?? 'streamable-http') as MCPServer['transport'];
+      if (!name || (transport !== 'http' && transport !== 'streamable-http' && transport !== 'stdio')) continue;
+
+      const endpoint = cfg.endpoint ?? cfg.url;
+      // Auto-enable dev proxy for external HTTPS endpoints (CORS bypass)
+      const useDevProxy = typeof cfg.useDevProxy === 'boolean' 
+        ? cfg.useDevProxy 
+        : shouldAutoEnableDevProxy(endpoint);
+      const out: ExportableMCPServer = {
+        name,
+        transport,
+        endpoint,
+        authToken: cfg.authToken,
+        headers: cfg.headers,
+        command: cfg.command,
+        args: cfg.args,
+        env: cfg.env,
+        useDevProxy,
+      };
+      normalized.push(out);
+    }
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'export.ts:457',message:'Normalization result Format B',data:{normalized},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    return normalized;
+  }
+
+  return [];
+}
+
 /**
  * Export all MCP servers to JSON string
  */
@@ -394,9 +521,8 @@ export async function importMCPServers(
   jsonContent: string,
   conflictStrategy: MCPImportConflictStrategy = 'skip'
 ): Promise<{ imported: number; skipped: number; replaced: number }> {
-  const data = JSON.parse(jsonContent) as MCPServerExport;
-
-  if (!data.servers || !Array.isArray(data.servers)) {
+  const serversToImport = normalizeMCPServerImport(jsonContent);
+  if (!serversToImport || serversToImport.length === 0) {
     throw new Error('Invalid MCP server export format');
   }
 
@@ -408,7 +534,7 @@ export async function importMCPServers(
   let skipped = 0;
   let replaced = 0;
 
-  for (const serverData of data.servers) {
+  for (const serverData of serversToImport) {
     const nameLower = serverData.name.toLowerCase();
     const existingServer = existingNames.get(nameLower);
 
