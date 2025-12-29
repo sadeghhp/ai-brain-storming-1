@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Confirmation Modal
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
@@ -11,7 +11,7 @@ export interface ConfirmationConfig {
   details?: string[];
   confirmText?: string;
   cancelText?: string;
-  variant?: 'danger' | 'warning' | 'info';
+  variant?: 'danger' | 'warning' | 'info' | 'success';
 }
 
 export class ConfirmationModal extends HTMLElement {
@@ -116,6 +116,12 @@ export class ConfirmationModal extends HTMLElement {
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
         `;
+      case 'success':
+        return `
+          <svg class="icon success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+        `;
       case 'info':
       default:
         return `
@@ -212,6 +218,10 @@ export class ConfirmationModal extends HTMLElement {
 
         .icon.info {
           color: var(--color-primary);
+        }
+
+        .icon.success {
+          color: var(--color-success);
         }
 
         .modal-body {
@@ -318,6 +328,16 @@ export class ConfirmationModal extends HTMLElement {
         }
 
         .btn-primary:hover {
+          opacity: 0.9;
+        }
+
+        .btn-success {
+          background: var(--color-success);
+          border: 1px solid var(--color-success);
+          color: var(--color-bg-primary);
+        }
+
+        .btn-success:hover {
           opacity: 0.9;
         }
 

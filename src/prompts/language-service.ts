@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Language Service
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import type { PromptTemplates, TemplateParams, LanguageCode } from './types';
@@ -686,6 +686,12 @@ Only output the translated text, nothing else.`,
     onProgress(70);
     
     const turnPrompts = await this.translateStringRecord(context.turnPrompts, targetLanguage, providerId, modelId);
+    onProgress(90);
+    
+    // Translate finishing phase prompts if they exist
+    const finishingPhase = context.finishingPhase 
+      ? await this.translateStringRecord(context.finishingPhase, targetLanguage, providerId, modelId)
+      : undefined;
     onProgress(100);
     
     return {
@@ -704,6 +710,7 @@ Only output the translated text, nothing else.`,
       discussionOpeningPrefix,
       messagePrefixes,
       turnPrompts,
+      ...(finishingPhase && { finishingPhase }),
     };
   }
 }

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "language": "",
   "languageName": "English",
   "agent": {
@@ -195,6 +195,20 @@
       "firstTurnParticipants": " Other participants ({participants}) will respond after you.",
       "regularTurn": "It's your turn to contribute, {agentName}. Consider what others have said and share your perspective. You can address specific participants ({participants}) or respond to the group.",
       "regularTurnAlone": "It's your turn to contribute, {agentName}. Share your perspective on the topic."
+    },
+    "finishingPhase": {
+      "broadcastMessage": "The discussion is now wrapping up. Each participant will have one final opportunity to share brief closing thoughts before the secretary compiles the final result.",
+      "agentInstructions": "FINAL ROUND: The discussion is concluding. Provide only your most important closing thoughts or final summary points. Be very brief (2-3 sentences maximum). Focus on your key takeaway or any final recommendation you want to emphasize.",
+      "secretaryInstructions": "FINAL ROUND: The discussion is concluding. Listen to final thoughts from participants, then prepare to compile the comprehensive final result document."
+    }
+  },
+  "ui": {
+    "finishButton": {
+      "label": "Finish Discussion",
+      "tooltip": "Wrap up the discussion with final thoughts and generate the final result",
+      "confirmTitle": "Finish Discussion?",
+      "confirmMessage": "This will allow each participant one final brief turn for closing thoughts, then generate the final result document.",
+      "confirmButton": "Finish"
     }
   }
 }

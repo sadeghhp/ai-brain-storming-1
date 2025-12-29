@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Control Bar Component
-// Version: 1.3.0
+// Version: 1.4.0
 // ============================================
 
 import type { ConversationStatus } from '../types';
@@ -109,6 +109,15 @@ export class ControlBar extends HTMLElement {
           border-color: var(--color-error);
         }
 
+        .control-btn.success {
+          color: var(--color-success);
+        }
+
+        .control-btn.success:hover:not(:disabled) {
+          background: rgba(34, 197, 94, 0.1);
+          border-color: var(--color-success);
+        }
+
         .speed-control {
           display: flex;
           align-items: center;
@@ -178,6 +187,11 @@ export class ControlBar extends HTMLElement {
           background: var(--color-primary);
         }
 
+        .status-dot.finishing {
+          background: var(--color-success);
+          animation: pulse 1s ease-in-out infinite;
+        }
+
         .status-dot.locked {
           background: var(--color-warning);
         }
@@ -214,6 +228,11 @@ export class ControlBar extends HTMLElement {
           <button class="control-btn danger" id="stop-btn" title="Stop" disabled>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
               <rect x="4" y="4" width="16" height="16" rx="2"/>
+            </svg>
+          </button>
+          <button class="control-btn success" id="finish-btn" title="Finish Discussion" disabled>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 6L9 17l-5-5"/>
             </svg>
           </button>
           <button class="control-btn" id="reset-btn" title="Reset">
@@ -263,6 +282,29 @@ export class ControlBar extends HTMLElement {
       this.dispatchEvent(new CustomEvent('stop'));
     });
 
+    // Finish button - show confirmation modal
+    this.shadowRoot?.getElementById('finish-btn')?.addEventListener('click', async () => {
+      const modal = this.shadowRoot?.getElementById('reset-confirm-modal') as ConfirmationModal;
+      if (!modal) return;
+
+      const confirmed = await modal.show({
+        title: 'Finish Discussion?',
+        message: 'This will allow each participant one final brief turn for closing thoughts, then generate the final result document.',
+        details: [
+          'Each agent gets a brief final turn',
+          'Secretary compiles the final result',
+          'Conversation will be marked as completed',
+        ],
+        confirmText: 'Finish',
+        cancelText: 'Cancel',
+        variant: 'success',
+      });
+
+      if (confirmed) {
+        this.dispatchEvent(new CustomEvent('finish'));
+      }
+    });
+
     // Reset button - show confirmation modal
     this.shadowRoot?.getElementById('reset-btn')?.addEventListener('click', async () => {
       const modal = this.shadowRoot?.getElementById('reset-confirm-modal') as ConfirmationModal;
@@ -300,15 +342,17 @@ export class ControlBar extends HTMLElement {
     const playBtn = this.shadowRoot?.getElementById('play-btn') as HTMLButtonElement;
     const pauseBtn = this.shadowRoot?.getElementById('pause-btn') as HTMLButtonElement;
     const stopBtn = this.shadowRoot?.getElementById('stop-btn') as HTMLButtonElement;
+    const finishBtn = this.shadowRoot?.getElementById('finish-btn') as HTMLButtonElement;
     const resetBtn = this.shadowRoot?.getElementById('reset-btn') as HTMLButtonElement;
 
-    if (!playBtn || !pauseBtn || !stopBtn || !resetBtn) return;
+    if (!playBtn || !pauseBtn || !stopBtn || !finishBtn || !resetBtn) return;
 
     // If locked by another tab, disable all control buttons
     if (this.locked) {
       playBtn.disabled = true;
       pauseBtn.disabled = true;
       stopBtn.disabled = true;
+      finishBtn.disabled = true;
       resetBtn.disabled = true;
       playBtn.title = 'Running in another tab';
       
@@ -330,6 +374,7 @@ export class ControlBar extends HTMLElement {
         playBtn.disabled = false;
         pauseBtn.disabled = true;
         stopBtn.disabled = true;
+        finishBtn.disabled = true;
         resetBtn.disabled = false;
         playBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
         playBtn.title = 'Start';
@@ -339,6 +384,7 @@ export class ControlBar extends HTMLElement {
         playBtn.disabled = true;
         pauseBtn.disabled = false;
         stopBtn.disabled = false;
+        finishBtn.disabled = false;
         resetBtn.disabled = true;
         playBtn.title = 'Start';
         break;
@@ -347,9 +393,20 @@ export class ControlBar extends HTMLElement {
         playBtn.disabled = false;
         pauseBtn.disabled = true;
         stopBtn.disabled = false;
+        finishBtn.disabled = false;
         resetBtn.disabled = false;
         playBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
         playBtn.title = 'Resume';
+        break;
+
+      case 'finishing':
+        // During finishing, disable most controls
+        playBtn.disabled = true;
+        pauseBtn.disabled = true;
+        stopBtn.disabled = true;
+        finishBtn.disabled = true;
+        resetBtn.disabled = true;
+        playBtn.title = 'Finishing...';
         break;
 
       case 'completed':
@@ -357,6 +414,7 @@ export class ControlBar extends HTMLElement {
         playBtn.disabled = false;
         pauseBtn.disabled = true;
         stopBtn.disabled = true;
+        finishBtn.disabled = true;
         resetBtn.disabled = false;
         playBtn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
         playBtn.title = 'Continue conversation';

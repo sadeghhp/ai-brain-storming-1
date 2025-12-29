@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.12.2
+// Version: 2.13.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -16,6 +16,7 @@ import { eventBus } from '../utils/event-bus';
 import { sleep } from '../utils/helpers';
 import { selectFirstSpeaker, getStrategyById } from '../strategies/starting-strategies';
 import { acquireLock, releaseLock, isLockedByOtherTab } from '../utils/conversation-lock';
+import { languageService } from '../prompts/language-service';
 import type { Conversation, Turn, Message, ConversationStatus, ConversationMode, StartingStrategyId, ConversationDepth, TurnQueueState, TurnQueueItem } from '../types';
 
 export interface ConversationEngineOptions {
@@ -223,6 +224,122 @@ export class ConversationEngine {
       
       eventBus.emit('conversation:stopped', this.conversation.id);
     }
+  }
+
+  /**
+   * Finish the conversation gracefully with a final wrap-up round.
+   * 1. Broadcasts a "finishing" message to all agents
+   * 2. Each agent gets one brief final turn for closing thoughts
+   * 3. Secretary generates the comprehensive final result
+   */
+  async finish(): Promise<void> {
+    const conversationId = this.conversation.id;
+    
+    // Transition to finishing state
+    if (!this.stateMachine.transition('finishing')) {
+      console.warn('[Engine] Cannot finish - invalid state');
+      return;
+    }
+
+    // Try to acquire lock if not already held
+    const lockAcquired = await acquireLock(conversationId);
+    if (!lockAcquired) {
+      console.warn('[Engine] Cannot finish - conversation is running in another tab');
+      this.options.onError?.(new Error('This conversation is running in another tab'));
+      eventBus.emit('conversation:lock-denied', conversationId);
+      return;
+    }
+
+    try {
+      ConversationEngine.getActiveConversationSet().add(conversationId);
+      await this.updateConversationStatus('finishing');
+      eventBus.emit('conversation:finishing', conversationId);
+
+      // Create a system message broadcasting the finish signal
+      const finishMessage = await messageStorage.create({
+        conversationId: this.conversation.id,
+        content: this.getFinishBroadcastMessage(),
+        round: this.conversation.currentRound,
+        type: 'system',
+      });
+      eventBus.emit('message:created', finishMessage);
+
+      // Run the final wrap-up round
+      await this.runFinishingRound();
+
+      // Generate the final comprehensive result
+      await this.generateFinalResult();
+
+      console.log(`[Engine] Conversation ${conversationId} finished successfully`);
+    } catch (error) {
+      this.turnExecutor?.abort();
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error('[Engine] Error during finish:', err);
+      this.options.onError?.(err);
+      
+      // Fall back to paused state on error
+      if (this.stateMachine.canTransition('completed')) {
+        this.stateMachine.transition('completed');
+        await this.updateConversationStatus('completed');
+      }
+    } finally {
+      ConversationEngine.getActiveConversationSet().delete(conversationId);
+      releaseLock(conversationId);
+    }
+  }
+
+  /**
+   * Get the finish broadcast message in the appropriate language
+   */
+  private getFinishBroadcastMessage(): string {
+    const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
+    return prompts.context.finishingPhase?.broadcastMessage || 
+      'The discussion is now wrapping up. Each participant will have one final opportunity to share brief closing thoughts before the secretary compiles the final result.';
+  }
+
+  /**
+   * Run a final wrap-up round where each agent gets one brief turn
+   */
+  private async runFinishingRound(): Promise<void> {
+    // Reset round tracking for the finishing round
+    this.completedAgentsInRound.clear();
+    
+    // Get non-secretary agents
+    const participantAgents = this.agents.filter(a => !a.entityData.isSecretary);
+    
+    if (participantAgents.length === 0) {
+      return;
+    }
+
+    // Execute brief final turn for each agent
+    for (const agent of participantAgents) {
+      if (!this.stateMachine.isFinishing()) {
+        break; // State changed, stop processing
+      }
+
+      try {
+        // Create a simplified turn schedule for the finishing round
+        const finishingSchedule: TurnSchedule = {
+          round: this.conversation.currentRound,
+          sequence: this.completedAgentsInRound.size,
+          agentId: agent.id,
+        };
+
+        // Execute the turn (the context builder will detect finishing state)
+        await this.executeTurn(finishingSchedule);
+
+        // Brief pause between agents
+        if (this.conversation.speedMs > 0) {
+          await sleep(Math.min(this.conversation.speedMs, 1000));
+        }
+      } catch (error) {
+        console.warn(`[Engine] Finishing turn failed for agent ${agent.id}:`, error);
+        // Continue with other agents even if one fails
+      }
+    }
+
+    // Mark finishing round as complete
+    this.completedAgentsInRound.clear();
   }
 
   /**

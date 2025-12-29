@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Turn Executor
-// Version: 1.4.1
+// Version: 1.5.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -197,6 +197,9 @@ export class TurnExecutor {
     const agentResponses = messages.filter(m => m.type === 'response');
     const isFirstTurn = agentResponses.length === 0;
 
+    // Determine if we're in the finishing phase
+    const isFinishing = this.conversation.status === 'finishing';
+
     // Use ContextBuilder for better token management and message prioritization
     const contextBuilder = new ContextBuilder(this.conversation);
     const contextComponents = contextBuilder.build(
@@ -210,6 +213,7 @@ export class TurnExecutor {
         isFirstTurn,
         currentRound: this.conversation.currentRound,
         distilledMemory: distilledMemory || null,
+        isFinishing,
       }
     );
 

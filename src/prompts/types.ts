@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Prompt Types
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 /**
@@ -292,6 +292,30 @@ export interface ContextPrompts {
     /** Regular turn without others: uses {agentName} */
     regularTurnAlone: string;
   };
+  
+  /** Finishing phase prompts (optional for backward compatibility) */
+  finishingPhase?: {
+    /** Broadcast message to all agents about wrapping up */
+    broadcastMessage: string;
+    /** Instructions for agents in the final round */
+    agentInstructions: string;
+    /** Instructions for secretary in the final round */
+    secretaryInstructions: string;
+  };
+}
+
+/**
+ * UI-related prompts
+ */
+export interface UIPrompts {
+  /** Finish button labels and messages */
+  finishButton: {
+    label: string;
+    tooltip: string;
+    confirmTitle: string;
+    confirmMessage: string;
+    confirmButton: string;
+  };
 }
 
 /**
@@ -318,6 +342,9 @@ export interface PromptTemplates {
   
   /** Context building prompts */
   context: ContextPrompts;
+  
+  /** UI-related prompts (optional for backward compatibility) */
+  ui?: UIPrompts;
 }
 
 /**

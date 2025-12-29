@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation View Component
-// Version: 2.4.0
+// Version: 2.5.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -510,6 +510,41 @@ export class ConversationView extends HTMLElement {
           height: 18px;
         }
 
+        /* Finish button - prominent styling */
+        .finish-btn {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          padding: var(--space-2) var(--space-4);
+          background: rgba(34, 197, 94, 0.1);
+          border: 1px solid var(--color-success);
+          border-radius: var(--radius-md);
+          color: var(--color-success);
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .finish-btn:hover:not(:disabled) {
+          background: rgba(34, 197, 94, 0.2);
+        }
+
+        .finish-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .finish-btn svg {
+          width: 16px;
+          height: 16px;
+        }
+
+        /* Hide finish button when not running or paused */
+        :host(:not([data-status="running"]):not([data-status="paused"])) .finish-btn {
+          display: none;
+        }
+
         /* Export dropdown */
         .export-wrapper {
           position: relative;
@@ -593,8 +628,15 @@ export class ConversationView extends HTMLElement {
           display: none;
         }
 
-        :host([data-status="running"]) turn-queue {
+        :host([data-status="running"]) turn-queue,
+        :host([data-status="finishing"]) turn-queue {
           display: block;
+        }
+
+        /* Status badge for finishing state */
+        .status-finishing {
+          background: rgba(34, 197, 94, 0.15);
+          color: var(--color-success);
         }
 
         /* Locked banner - shown when conversation is running in another tab */
@@ -633,6 +675,12 @@ export class ConversationView extends HTMLElement {
         <div class="conv-meta">
           <round-progress conversation-id="${conversation.id}"></round-progress>
           <span class="status-badge status-${conversation.status}">${conversation.status}</span>
+          <button class="finish-btn" id="finish-header-btn" title="Finish Discussion" ${this.isLocked ? 'disabled' : ''}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 6L9 17l-5-5"/>
+            </svg>
+            Finish
+          </button>
           <div class="export-wrapper">
             <button class="header-btn" id="export-btn" title="Export Conversation" aria-haspopup="menu" aria-expanded="false" aria-controls="export-dropdown">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -759,6 +807,7 @@ export class ConversationView extends HTMLElement {
       controlBar.addEventListener('pause', () => this.engine?.pause());
       controlBar.addEventListener('resume', () => this.engine?.resume());
       controlBar.addEventListener('stop', () => this.engine?.stop());
+      controlBar.addEventListener('finish', () => this.engine?.finish());
       controlBar.addEventListener('reset', () => this.engine?.reset());
       controlBar.addEventListener('speed-change', (e: Event) => {
         const { speedMs } = (e as CustomEvent).detail || {};
@@ -774,6 +823,10 @@ export class ConversationView extends HTMLElement {
       const settingsModal = this.shadowRoot?.getElementById('conv-settings-modal') as HTMLElement;
       settingsModal?.setAttribute('open', 'true');
     });
+
+    // Set up header finish button (calls the same finish as control bar)
+    const finishHeaderBtn = this.shadowRoot.getElementById('finish-header-btn');
+    finishHeaderBtn?.addEventListener('click', () => this.engine?.finish());
 
     // Set up export button and dropdown
     const exportBtn = this.shadowRoot.getElementById('export-btn');

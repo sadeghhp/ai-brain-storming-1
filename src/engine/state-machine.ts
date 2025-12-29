@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Conversation State Machine
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import type { ConversationStatus } from '../types';
@@ -10,8 +10,9 @@ import type { ConversationStatus } from '../types';
  */
 const validTransitions: Record<ConversationStatus, ConversationStatus[]> = {
   idle: ['running'],
-  running: ['paused', 'completed', 'idle'], // idle for reset
-  paused: ['running', 'idle'], // idle for reset
+  running: ['paused', 'completed', 'finishing', 'idle'], // idle for reset, finishing for wrap-up
+  paused: ['running', 'finishing', 'idle'], // idle for reset, finishing for wrap-up
+  finishing: ['completed', 'idle'], // finishing leads to completed or can be reset
   completed: ['idle', 'running'], // reset to idle OR restart conversation
 };
 
@@ -86,8 +87,12 @@ export class ConversationStateMachine {
     return this.status === 'completed';
   }
 
+  isFinishing(): boolean {
+    return this.status === 'finishing';
+  }
+
   isActive(): boolean {
-    return this.status === 'running' || this.status === 'paused';
+    return this.status === 'running' || this.status === 'paused' || this.status === 'finishing';
   }
 
   /**

@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Context Builder
-// Version: 1.3.0
+// Version: 1.4.0
 // ============================================
 
 import type { Agent, Conversation, Message, UserInterjection, Notebook, DistilledMemory } from '../types';
@@ -24,6 +24,7 @@ export interface BuildOptions {
   isFirstTurn?: boolean;
   currentRound?: number;
   distilledMemory?: DistilledMemory | null;
+  isFinishing?: boolean; // Set to true during the finishing/wrap-up round
 }
 
 /**
@@ -118,6 +119,7 @@ export class ContextBuilder {
     );
 
     // Build LLM messages
+    const isFinishing = options.isFinishing ?? false;
     const promptMessages = this.buildPromptMessages(
       systemPrompt,
       agent,
@@ -128,7 +130,8 @@ export class ContextBuilder {
       secretarySummary,
       isFirstTurn,
       currentRound,
-      useDistilledMemory ? distilledMemory : null
+      useDistilledMemory ? distilledMemory : null,
+      isFinishing
     );
 
     return {
@@ -227,7 +230,8 @@ export class ContextBuilder {
     secretarySummary?: string,
     isFirstTurn: boolean = false,
     currentRound: number = 0,
-    distilledMemory: DistilledMemory | null = null
+    distilledMemory: DistilledMemory | null = null,
+    isFinishing: boolean = false
   ): LLMMessage[] {
     const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
     const result: LLMMessage[] = [];
@@ -324,8 +328,8 @@ export class ContextBuilder {
       result.push(this.formatMessage(message, agent, allAgents));
     }
 
-    // Final prompt
-    result.push(this.buildFinalPrompt(agent, allAgents, isFirstTurn));
+    // Final prompt (include finishing flag)
+    result.push(this.buildFinalPrompt(agent, allAgents, isFirstTurn, isFinishing));
 
     return result;
   }
@@ -445,11 +449,32 @@ export class ContextBuilder {
   /**
    * Build the final prompt asking for the agent's response
    */
-  private buildFinalPrompt(agent: Agent, allAgents: Agent[], isFirstTurn: boolean = false): LLMMessage {
+  private buildFinalPrompt(agent: Agent, allAgents: Agent[], isFirstTurn: boolean = false, isFinishing: boolean = false): LLMMessage {
     const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
     const otherAgents = allAgents
       .filter(a => a.id !== agent.id && !a.isSecretary)
       .map(a => a.name);
+
+    // Finishing phase: give brief closing instructions
+    if (isFinishing) {
+      if (agent.isSecretary) {
+        // Secretary instructions for finishing round
+        const secretaryInstructions = prompts.context.finishingPhase?.secretaryInstructions ||
+          'FINAL ROUND: The discussion is concluding. Listen to final thoughts from participants, then prepare to compile the comprehensive final result document.';
+        return {
+          role: 'user',
+          content: secretaryInstructions,
+        };
+      }
+      
+      // Agent instructions for finishing round
+      const agentInstructions = prompts.context.finishingPhase?.agentInstructions ||
+        'FINAL ROUND: The discussion is concluding. Provide only your most important closing thoughts or final summary points. Be very brief (2-3 sentences maximum). Focus on your key takeaway or any final recommendation you want to emphasize.';
+      return {
+        role: 'user',
+        content: agentInstructions,
+      };
+    }
 
     if (agent.isSecretary) {
       return {

@@ -1,12 +1,12 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.9.0
+// Version: 1.10.0
 // ============================================
 
 // ----- Enums -----
 
 export type ConversationMode = 'round-robin' | 'moderator' | 'dynamic';
-export type ConversationStatus = 'idle' | 'running' | 'paused' | 'completed';
+export type ConversationStatus = 'idle' | 'running' | 'paused' | 'finishing' | 'completed';
 export type ConversationDepth = 'brief' | 'concise' | 'standard' | 'detailed' | 'deep';
 export type TurnState = 'planned' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type MessageType = 'response' | 'summary' | 'interjection' | 'system' | 'opening';
@@ -337,6 +337,7 @@ export interface AppEvents {
   'conversation:paused': string;
   'conversation:resumed': string;
   'conversation:stopped': string;
+  'conversation:finishing': string;
   'conversation:reset': string;
   'conversation:lock-denied': string;
   'conversation:rounds-decided': RoundDecisionEvent;
