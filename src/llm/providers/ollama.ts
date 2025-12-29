@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Ollama Provider
-// Version: 2.0.0
 // ============================================
 
 import { BaseLLMProvider, type ExtendedProviderConfig } from './base-provider';

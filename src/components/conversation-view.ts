@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Conversation View Component
-// Version: 2.5.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -24,6 +23,7 @@ export class ConversationView extends HTMLElement {
   private lockCheckInterval: number | null = null;
   private onExportDocumentClick: ((e: MouseEvent) => void) | null = null;
   private onExportDocumentKeydown: ((e: KeyboardEvent) => void) | null = null;
+  private eventUnsubscribers: (() => void)[] = [];
 
   static get observedAttributes() {
     return ['conversation-id'];
@@ -62,6 +62,11 @@ export class ConversationView extends HTMLElement {
       clearInterval(this.lockCheckInterval);
       this.lockCheckInterval = null;
     }
+    // Cleanup event bus subscriptions to prevent memory leaks
+    for (const unsubscribe of this.eventUnsubscribers) {
+      unsubscribe();
+    }
+    this.eventUnsubscribers = [];
   }
 
   private async loadConversation() {
@@ -120,42 +125,60 @@ export class ConversationView extends HTMLElement {
   }
 
   private setupEventListeners() {
+    // Clear any existing subscriptions before setting up new ones
+    for (const unsubscribe of this.eventUnsubscribers) {
+      unsubscribe();
+    }
+    this.eventUnsubscribers = [];
+
     // Handle control bar actions
-    eventBus.on('conversation:started', (id) => {
-      if (id === this.conversationId) {
-        this.updateControlBar();
-      }
-    });
+    this.eventUnsubscribers.push(
+      eventBus.on('conversation:started', (id) => {
+        if (id === this.conversationId) {
+          this.updateControlBar();
+        }
+      })
+    );
 
-    eventBus.on('conversation:paused', (id) => {
-      if (id === this.conversationId) {
-        this.updateControlBar();
-      }
-    });
+    this.eventUnsubscribers.push(
+      eventBus.on('conversation:paused', (id) => {
+        if (id === this.conversationId) {
+          this.updateControlBar();
+        }
+      })
+    );
 
-    eventBus.on('conversation:resumed', (id) => {
-      if (id === this.conversationId) {
-        this.updateControlBar();
-      }
-    });
+    this.eventUnsubscribers.push(
+      eventBus.on('conversation:resumed', (id) => {
+        if (id === this.conversationId) {
+          this.updateControlBar();
+        }
+      })
+    );
 
-    eventBus.on('conversation:stopped', (id) => {
-      if (id === this.conversationId) {
-        this.updateControlBar();
-      }
-    });
+    this.eventUnsubscribers.push(
+      eventBus.on('conversation:stopped', (id) => {
+        if (id === this.conversationId) {
+          this.updateControlBar();
+        }
+      })
+    );
 
-    eventBus.on('conversation:reset', (id) => {
-      if (id === this.conversationId) {
-        this.updateControlBar();
-      }
-    });
+    this.eventUnsubscribers.push(
+      eventBus.on('conversation:reset', (id) => {
+        if (id === this.conversationId) {
+          this.updateControlBar();
+        }
+      })
+    );
 
-    eventBus.on('conversation:updated', (conv) => {
-      if (conv.id === this.conversationId) {
-        this.loadConversation();
-      }
-    });
+    this.eventUnsubscribers.push(
+      eventBus.on('conversation:updated', (conv) => {
+        if (conv.id === this.conversationId) {
+          this.loadConversation();
+        }
+      })
+    );
   }
 
   private updateControlBar() {

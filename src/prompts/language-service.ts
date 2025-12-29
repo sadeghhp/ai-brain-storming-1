@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Language Service
-// Version: 1.1.0
 // ============================================
 
 import type { PromptTemplates, TemplateParams, LanguageCode } from './types';
@@ -12,10 +11,28 @@ const PROMPTS_DB_NAME = 'PromptTemplatesDB';
 const PROMPTS_STORE_NAME = 'templates';
 
 // Bundled prompt packs shipped with the app (always available, no IndexedDB needed)
+// Use explicit string keys to avoid any property name ambiguity
 const BUNDLED_PROMPTS: Record<string, PromptTemplates> = {
   '': englishPrompts as PromptTemplates,
-  Persian: persianPrompts as PromptTemplates,
+  'Persian': persianPrompts as PromptTemplates,
 };
+
+/**
+ * Check if a language code has bundled prompts available
+ */
+function hasBundledPrompts(languageCode: string): boolean {
+  return Object.prototype.hasOwnProperty.call(BUNDLED_PROMPTS, languageCode);
+}
+
+/**
+ * Get bundled prompts for a language code, or undefined if not bundled
+ */
+function getBundledPrompts(languageCode: string): PromptTemplates | undefined {
+  if (hasBundledPrompts(languageCode)) {
+    return BUNDLED_PROMPTS[languageCode];
+  }
+  return undefined;
+}
 
 /**
  * Translation progress event
@@ -44,7 +61,11 @@ class LanguageServiceImpl {
     // Initialize bundled prompts in cache
     for (const [code, prompts] of Object.entries(BUNDLED_PROMPTS)) {
       this.cache.set(code, prompts);
+      console.log(`[LanguageService] Bundled language loaded: "${code || 'English'}" (${prompts.languageName})`);
     }
+    
+    // Log available bundled languages
+    console.log('[LanguageService] Available bundled languages:', Object.keys(BUNDLED_PROMPTS).map(k => k || 'English'));
     
     // Initialize IndexedDB for other languages
     this.dbReady = this.initDB();
@@ -85,16 +106,76 @@ class LanguageServiceImpl {
   }
 
   /**
+   * Debug method to check language service status
+   * Call from browser console: languageService.debug()
+   */
+  debug(): void {
+    console.group('[LanguageService] Debug Info');
+    
+    // Bundled languages
+    console.log('Bundled languages:', Object.keys(BUNDLED_PROMPTS).map(k => k || 'English (default)'));
+    
+    // Cached languages
+    console.log('Cached languages:', Array.from(this.cache.keys()).map(k => k || 'English (default)'));
+    
+    // Check each bundled language
+    for (const [code, prompts] of Object.entries(BUNDLED_PROMPTS)) {
+      const displayCode = code || 'English';
+      console.log(`${displayCode}:`, {
+        language: prompts.language,
+        languageName: prompts.languageName,
+        version: prompts.version,
+        hasAgentPrompts: !!prompts.agent,
+        hasSecretaryPrompts: !!prompts.secretary,
+        hasStrategies: !!prompts.strategies,
+        hasContext: !!prompts.context,
+        samplePrompt: prompts.agent?.coreIdentity?.substring(0, 50) + '...',
+      });
+    }
+    
+    // Test lookup
+    console.log('Lookup test - English:', !!this.getPromptsSync(''));
+    console.log('Lookup test - Persian:', !!this.getPromptsSync('Persian'));
+    console.log('hasBundledPrompts("Persian"):', hasBundledPrompts('Persian'));
+    console.log('hasBundledPrompts(""):', hasBundledPrompts(''));
+    
+    console.groupEnd();
+  }
+
+  /**
+   * Get debug info as an object (useful for programmatic access)
+   */
+  getDebugInfo(): {
+    bundledLanguages: string[];
+    cachedLanguages: string[];
+    persianAvailable: boolean;
+    persianPromptSample: string | null;
+  } {
+    const persianPrompts = getBundledPrompts('Persian');
+    return {
+      bundledLanguages: Object.keys(BUNDLED_PROMPTS).map(k => k || 'English'),
+      cachedLanguages: Array.from(this.cache.keys()).map(k => k || 'English'),
+      persianAvailable: hasBundledPrompts('Persian'),
+      persianPromptSample: persianPrompts?.agent?.coreIdentity?.substring(0, 100) || null,
+    };
+  }
+
+  /**
    * Get prompts synchronously from cache
    * Returns English if language not cached
    * Use this for synchronous code paths, but ensure language is pre-loaded
    */
   getPromptsSync(languageCode: LanguageCode | string): PromptTemplates {
-    // Bundled languages (always available)
+    // Empty string means English (default)
     if (!languageCode) return this.getEnglishPrompts();
-    if (languageCode in BUNDLED_PROMPTS) return BUNDLED_PROMPTS[languageCode];
+    
+    // Check bundled prompts first (Persian, etc.)
+    const bundled = getBundledPrompts(languageCode);
+    if (bundled) {
+      return bundled;
+    }
 
-    // Check cache
+    // Check cache for dynamically translated languages
     if (this.cache.has(languageCode)) {
       return this.cache.get(languageCode)!;
     }
@@ -109,14 +190,18 @@ class LanguageServiceImpl {
    * Call this before using getPromptsSync to ensure language is available
    */
   async preloadLanguage(languageCode: LanguageCode | string): Promise<boolean> {
-    // Bundled languages are always available
+    // Empty string means English, always available
     if (!languageCode) return true;
-    if (languageCode in BUNDLED_PROMPTS) return true;
+    
+    // Bundled languages (Persian, etc.) are always available
+    if (hasBundledPrompts(languageCode)) return true;
 
+    // Check if already cached
     if (this.cache.has(languageCode)) {
       return true;
     }
 
+    // Try to load from IndexedDB
     await this.dbReady;
     const stored = await this.loadFromDB(languageCode);
     
@@ -133,11 +218,16 @@ class LanguageServiceImpl {
    * Returns English if language not available
    */
   async getPrompts(languageCode: LanguageCode | string): Promise<PromptTemplates> {
-    // Bundled languages (always available)
+    // Empty string means English (default)
     if (!languageCode) return this.getEnglishPrompts();
-    if (languageCode in BUNDLED_PROMPTS) return BUNDLED_PROMPTS[languageCode];
+    
+    // Check bundled prompts first (Persian, etc.)
+    const bundled = getBundledPrompts(languageCode);
+    if (bundled) {
+      return bundled;
+    }
 
-    // Check cache first
+    // Check cache for dynamically translated languages
     if (this.cache.has(languageCode)) {
       return this.cache.get(languageCode)!;
     }
@@ -160,11 +250,13 @@ class LanguageServiceImpl {
    * Check if a language is available (has translated prompts)
    */
   async isLanguageAvailable(languageCode: LanguageCode | string): Promise<boolean> {
-    // Bundled languages are always available
+    // Empty string means English, always available
     if (!languageCode) return true;
-    if (languageCode in BUNDLED_PROMPTS) return true;
+    
+    // Bundled languages (Persian, etc.) are always available
+    if (hasBundledPrompts(languageCode)) return true;
 
-    // Check cache
+    // Check cache for dynamically translated languages
     if (this.cache.has(languageCode)) {
       return true;
     }
@@ -179,13 +271,14 @@ class LanguageServiceImpl {
    * Get list of available (already translated) languages
    */
   async getAvailableLanguages(): Promise<string[]> {
-    const languages = [''];  // English always available
+    // Start with all bundled languages (English + Persian, etc.)
+    const bundledLanguages = Object.keys(BUNDLED_PROMPTS);
     
     await this.dbReady;
     
     return new Promise((resolve) => {
       if (!this.db) {
-        resolve(languages);
+        resolve(bundledLanguages);
         return;
       }
 
@@ -194,12 +287,14 @@ class LanguageServiceImpl {
       const request = store.getAllKeys();
       
       request.onsuccess = () => {
-        const keys = request.result as string[];
-        resolve([...languages, ...keys]);
+        const dbKeys = request.result as string[];
+        // Combine bundled + database languages, removing duplicates
+        const allLanguages = [...new Set([...bundledLanguages, ...dbKeys])];
+        resolve(allLanguages);
       };
       
       request.onerror = () => {
-        resolve(languages);
+        resolve(bundledLanguages);
       };
     });
   }

@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Control Bar Component
-// Version: 1.4.0
 // ============================================
 
 import type { ConversationStatus } from '../types';

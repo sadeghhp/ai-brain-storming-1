@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Context Builder
-// Version: 1.4.0
 // ============================================
 
 import type { Agent, Conversation, Message, UserInterjection, Notebook, DistilledMemory } from '../types';

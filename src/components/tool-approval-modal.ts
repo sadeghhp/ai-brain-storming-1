@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Tool Approval Modal Component
-// Version: 1.0.0
 // ============================================
 //
 // Modal for approving or denying MCP tool calls

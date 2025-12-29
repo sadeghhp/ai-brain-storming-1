@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - User Input Component
-// Version: 1.1.0
 // ============================================
 
 import { UserInterjectionHandler } from '../engine/user-interjection';

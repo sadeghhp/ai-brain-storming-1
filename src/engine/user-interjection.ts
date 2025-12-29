@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - User Interjection Handler
-// Version: 1.0.0
 // ============================================
 
 import { interjectionStorage, messageStorage } from '../storage/storage-manager';

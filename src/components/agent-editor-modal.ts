@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Agent Editor Modal
-// Version: 1.5.0
 // ============================================
 
 import { presetStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
@@ -42,6 +41,7 @@ export class AgentEditorModal extends HTMLElement {
   private expandedCategories: Set<string> = new Set();
   private hiddenCategories: Set<string> = new Set();
   private hiddenPresets: Set<string> = new Set();
+  private presetSearchQuery: string = '';
 
   private elId(suffix: string): string {
     return `${this.uid}-${suffix}`;
@@ -144,6 +144,7 @@ export class AgentEditorModal extends HTMLElement {
 
   private close() {
     this.setAttribute('open', 'false');
+    this.presetSearchQuery = '';
     this.dispatchEvent(new CustomEvent('agent:cancelled'));
   }
 
@@ -155,21 +156,37 @@ export class AgentEditorModal extends HTMLElement {
     return this.providers.find(p => p.isActive);
   }
 
-  private getPresetsByCategory(): Map<string, AgentPreset[]> {
+  private getFilteredPresets(): AgentPreset[] {
+    if (!this.presetSearchQuery.trim()) {
+      return this.presets;
+    }
+    const query = this.presetSearchQuery.toLowerCase();
+    return this.presets.filter(p =>
+      p.name.toLowerCase().includes(query) ||
+      p.expertise.toLowerCase().includes(query) ||
+      p.description.toLowerCase().includes(query)
+    );
+  }
+
+  private getPresetsByCategory(presetsToGroup?: AgentPreset[]): Map<string, AgentPreset[]> {
     const grouped = new Map<string, AgentPreset[]>();
+    const presetsSource = presetsToGroup || this.presets;
     
     // Initialize all categories
     for (const category of presetCategories) {
-      if (category.id !== 'custom') { // Skip 'custom' category since we have Custom Agent option
-        grouped.set(category.id, []);
-      }
+      grouped.set(category.id, []);
     }
     
     // Group presets by category
-    for (const preset of this.presets) {
+    for (const preset of presetsSource) {
       const categoryPresets = grouped.get(preset.category);
       if (categoryPresets) {
         categoryPresets.push(preset);
+      } else {
+        // If preset has unknown category, bucket it into 'custom'
+        const customPresets = grouped.get('custom') || [];
+        customPresets.push(preset);
+        grouped.set('custom', customPresets);
       }
     }
     
@@ -177,10 +194,27 @@ export class AgentEditorModal extends HTMLElement {
   }
 
   private renderPresetCategories(): string {
-    const grouped = this.getPresetsByCategory();
+    const filteredPresets = this.getFilteredPresets();
+    const grouped = this.getPresetsByCategory(filteredPresets);
     
-    // Auto-expand first category with presets if none expanded
-    if (this.expandedCategories.size === 0) {
+    // If searching and no results
+    if (this.presetSearchQuery && filteredPresets.length === 0) {
+      return `
+        <div class="search-empty">
+          No templates found matching "${this.presetSearchQuery}"
+        </div>
+      `;
+    }
+    
+    // If searching, expand all categories with matches
+    if (this.presetSearchQuery) {
+      for (const [categoryId, presets] of grouped) {
+        if (presets.length > 0) {
+          this.expandedCategories.add(categoryId);
+        }
+      }
+    } else if (this.expandedCategories.size === 0) {
+      // Auto-expand first category with presets if none expanded
       for (const [categoryId, presets] of grouped) {
         if (presets.length > 0) {
           this.expandedCategories.add(categoryId);
@@ -190,7 +224,6 @@ export class AgentEditorModal extends HTMLElement {
     }
     
     return presetCategories
-      .filter(cat => cat.id !== 'custom')
       .map(category => {
         const presets = grouped.get(category.id) || [];
         if (presets.length === 0) return ''; // Hide empty categories
@@ -211,7 +244,7 @@ export class AgentEditorModal extends HTMLElement {
             </div>
             <div class="preset-category-content ${isExpanded ? 'expanded' : ''}">
               ${presets.map(p => `
-                <div class="preset-chip ${this.selectedPresetId === p.id ? 'selected' : ''}" data-preset-id="${p.id}">
+                <div class="preset-chip ${this.selectedPresetId === p.id ? 'selected' : ''}" data-preset-id="${p.id}" title="${p.expertise}">
                   ${p.name}
                 </div>
               `).join('')}
@@ -438,6 +471,50 @@ export class AgentEditorModal extends HTMLElement {
           border-radius: var(--radius-md);
           max-height: 280px;
           overflow-y: auto;
+        }
+
+        .preset-search-wrapper {
+          padding: var(--space-3);
+          border-bottom: 1px solid var(--color-border);
+          position: relative;
+        }
+
+        .preset-search-icon {
+          position: absolute;
+          left: calc(var(--space-3) + var(--space-3));
+          top: 50%;
+          transform: translateY(-50%);
+          color: var(--color-text-tertiary);
+          pointer-events: none;
+        }
+
+        .preset-search {
+          width: 100%;
+          padding: var(--space-2) var(--space-3);
+          padding-left: 36px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          color: var(--color-text-primary);
+          font-size: var(--text-sm);
+          transition: all var(--transition-fast);
+        }
+
+        .preset-search:focus {
+          outline: none;
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 3px var(--color-primary-dim);
+        }
+
+        .preset-search::placeholder {
+          color: var(--color-text-tertiary);
+        }
+
+        .search-empty {
+          padding: var(--space-4);
+          text-align: center;
+          color: var(--color-text-tertiary);
+          font-size: var(--text-sm);
         }
 
         .preset-custom-option {
@@ -735,6 +812,15 @@ export class AgentEditorModal extends HTMLElement {
               <div class="section">
                 <div class="section-title">Start from Template (Optional)</div>
                 <div class="preset-selector">
+                  <div class="preset-search-wrapper">
+                    <svg class="preset-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" class="preset-search" id="preset-search" 
+                           placeholder="Search templates..." 
+                           value="${this.presetSearchQuery}">
+                  </div>
                   <div class="preset-custom-option">
                     <div class="preset-chip ${!this.selectedPresetId ? 'selected' : ''}" data-preset-id="">
                       Custom Agent
@@ -900,7 +986,37 @@ export class AgentEditorModal extends HTMLElement {
       }
     });
 
+    // Preset search
+    const searchInput = this.shadowRoot?.getElementById('preset-search') as HTMLInputElement | null;
+    searchInput?.addEventListener('input', () => {
+      this.presetSearchQuery = searchInput.value;
+      // Re-render the preset categories
+      const selector = this.shadowRoot?.querySelector('.preset-selector');
+      if (selector) {
+        // Remove existing categories and search-empty state
+        const categories = selector.querySelectorAll('.preset-category, .search-empty');
+        categories.forEach(c => c.remove());
+        // Add updated categories
+        const fragment = document.createElement('div');
+        fragment.innerHTML = this.renderPresetCategories();
+        while (fragment.firstChild) {
+          selector.appendChild(fragment.firstChild);
+        }
+        // Re-attach category handlers
+        this.attachCategoryHandlers();
+        // Re-attach chip handlers
+        this.attachChipHandlers();
+      }
+    });
+
     // Category accordion toggle
+    this.attachCategoryHandlers();
+
+    // Preset selection
+    this.attachChipHandlers();
+  }
+
+  private attachCategoryHandlers() {
     this.shadowRoot?.querySelectorAll('.preset-category-header').forEach(header => {
       header.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -921,7 +1037,9 @@ export class AgentEditorModal extends HTMLElement {
         }
       });
     });
+  }
 
+  private attachChipHandlers() {
     // Preset selection
     this.shadowRoot?.querySelectorAll('.preset-chip').forEach(chip => {
       chip.addEventListener('click', (e) => {

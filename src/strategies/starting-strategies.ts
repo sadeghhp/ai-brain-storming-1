@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Starting Strategies
-// Version: 1.1.0
 // ============================================
 
 import type { StartingStrategyId } from '../types';

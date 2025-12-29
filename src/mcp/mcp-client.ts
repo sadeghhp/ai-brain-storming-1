@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - MCP Client
-// Version: 1.0.0
 // ============================================
 // 
 // MCP (Model Context Protocol) client implementation
@@ -509,10 +508,6 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
     if (!server.endpoint) {
       throw new Error('Streamable HTTP MCP server requires an endpoint URL');
     }
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:456',message:'StreamableHttpMCPClient constructor',data:{serverName:server.name, useDevProxy:server.useDevProxy, originalEndpoint:server.endpoint},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
 
     const forceProxy = !server.useDevProxy && isLocalDevHost() && isExternalHttpsEndpoint(server.endpoint);
     const shouldProxy = server.useDevProxy || forceProxy;
@@ -523,10 +518,6 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
     } else {
       this.endpoint = server.endpoint;
     }
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:468',message:'StreamableHttpMCPClient endpoint set',data:{endpoint:this.endpoint, forceProxy},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     
     // Build headers from custom headers and authToken
     this.customHeaders = { ...server.headers };
@@ -596,10 +587,6 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
       params,
     };
 
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:sendRequest',message:'Sending MCP request',data:{method,endpoint:this.endpoint,id},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
-
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT);
@@ -618,10 +605,6 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
       });
 
       clearTimeout(timeoutId);
-
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:afterFetch',message:'Got response',data:{status:response.status,statusText:response.statusText,contentType:response.headers.get('content-type')},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
@@ -660,9 +643,6 @@ export class StreamableHttpMCPClient extends BaseMCPClient {
 
       return { jsonrpc: '2.0', id, result: {} };
     } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'mcp-client.ts:catchError',message:'Request failed',data:{errorName:(error as Error).name,errorMessage:(error as Error).message,method},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error(`Request timeout for method: ${method}`);
       }

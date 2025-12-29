@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Base LLM Provider
-// Version: 2.0.0
 // ============================================
 
 import type {
@@ -12,6 +11,8 @@ import type {
   LLMError,
 } from '../types';
 import type { ApiFormat, ProviderModel } from '../../types';
+import { RETRY } from '../../constants';
+import { RateLimiter, type RateLimiterConfig } from '../rate-limiter';
 
 /**
  * Extended provider config with user-defined models
@@ -19,6 +20,7 @@ import type { ApiFormat, ProviderModel } from '../../types';
 export interface ExtendedProviderConfig extends LLMProviderConfig {
   autoFetchModels: boolean;
   userModels: ProviderModel[];
+  rateLimitConfig?: Partial<RateLimiterConfig>;
 }
 
 /**
@@ -28,6 +30,7 @@ export abstract class BaseLLMProvider {
   protected config: LLMProviderConfig;
   protected extendedConfig: ExtendedProviderConfig;
   protected abortController: AbortController | null = null;
+  protected rateLimiter: RateLimiter;
 
   constructor(config: LLMProviderConfig, extendedConfig?: Partial<ExtendedProviderConfig>) {
     this.config = config;
@@ -35,7 +38,9 @@ export abstract class BaseLLMProvider {
       ...config,
       autoFetchModels: extendedConfig?.autoFetchModels ?? true,
       userModels: extendedConfig?.userModels ?? [],
+      rateLimitConfig: extendedConfig?.rateLimitConfig,
     };
+    this.rateLimiter = new RateLimiter(extendedConfig?.rateLimitConfig);
   }
 
   /**
@@ -151,15 +156,59 @@ export abstract class BaseLLMProvider {
   }
 
   /**
-   * Handle fetch errors with retries
+   * Update rate limiter configuration
+   */
+  updateRateLimitConfig(config: Partial<RateLimiterConfig>): void {
+    this.rateLimiter.updateConfig(config);
+  }
+
+  /**
+   * Get current rate limit usage
+   */
+  getRateLimitUsage(): { requests: number; tokens: number; windowMs: number } {
+    return this.rateLimiter.getUsage();
+  }
+
+  /**
+   * Record tokens used by a request (for rate limiting)
+   */
+  protected recordTokenUsage(tokens: number): void {
+    this.rateLimiter.recordTokens(tokens);
+  }
+
+  /**
+   * Wait for rate limit slot before making request
+   */
+  protected async waitForRateLimit(): Promise<void> {
+    await this.rateLimiter.waitForSlot();
+    this.rateLimiter.recordRequest();
+  }
+
+  /**
+   * Calculate delay with exponential backoff and jitter
+   */
+  protected calculateBackoffDelay(attempt: number, baseDelay: number = RETRY.INITIAL_DELAY_MS): number {
+    // Exponential backoff: baseDelay * (multiplier ^ attempt)
+    const exponentialDelay = baseDelay * Math.pow(RETRY.BACKOFF_MULTIPLIER, attempt);
+    
+    // Cap at maximum delay
+    const cappedDelay = Math.min(exponentialDelay, RETRY.MAX_DELAY_MS);
+    
+    // Add jitter: random value between 0 and jitterFactor * delay
+    const jitter = cappedDelay * RETRY.JITTER_FACTOR * Math.random();
+    
+    return cappedDelay + jitter;
+  }
+
+  /**
+   * Handle fetch errors with exponential backoff and jitter
    */
   protected async fetchWithRetry(
     url: string,
     options: RequestInit,
-    maxRetries: number = 3
+    maxRetries: number = RETRY.MAX_ATTEMPTS
   ): Promise<Response> {
     let lastError: Error | null = null;
-    let delay = 1000; // Start with 1 second delay
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
@@ -173,10 +222,12 @@ export abstract class BaseLLMProvider {
         if (response.status === 429 || response.status >= 500) {
           // Rate limit or server error - retry
           const retryAfter = response.headers.get('Retry-After');
-          delay = retryAfter ? parseInt(retryAfter) * 1000 : delay * 2;
+          const delay = retryAfter 
+            ? parseInt(retryAfter) * 1000 
+            : this.calculateBackoffDelay(attempt);
 
           if (attempt < maxRetries - 1) {
-            console.warn(`[${this.name}] Request failed (${response.status}), retrying in ${delay}ms...`);
+            console.warn(`[${this.name}] Request failed (${response.status}), retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})...`);
             await this.sleep(delay);
             continue;
           }
@@ -197,9 +248,9 @@ export abstract class BaseLLMProvider {
         lastError = error as Error;
 
         if (attempt < maxRetries - 1) {
-          console.warn(`[${this.name}] Request failed, retrying in ${delay}ms...`, error);
+          const delay = this.calculateBackoffDelay(attempt);
+          console.warn(`[${this.name}] Request failed, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})...`, error);
           await this.sleep(delay);
-          delay *= 2; // Exponential backoff
         }
       }
     }

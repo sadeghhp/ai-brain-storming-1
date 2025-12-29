@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Agent Class
-// Version: 1.0.0
 // ============================================
 
 import type { Agent as AgentEntity, Notebook, Message } from '../types';

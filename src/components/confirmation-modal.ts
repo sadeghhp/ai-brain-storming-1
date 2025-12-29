@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Confirmation Modal
-// Version: 1.2.0
 // ============================================
 
 import { shadowBaseStyles } from '../styles/shadow-base-styles';

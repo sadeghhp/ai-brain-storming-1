@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Anthropic-Compatible Provider
-// Version: 1.0.0
 // ============================================
 
 import { BaseLLMProvider, type ExtendedProviderConfig } from './base-provider';
@@ -12,6 +11,8 @@ import type {
   LLMProviderConfig,
 } from '../types';
 import type { ApiFormat } from '../../types';
+import { countTokens } from '../token-counter';
+import { CACHE } from '../../constants';
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
 
@@ -53,7 +54,7 @@ interface AnthropicStreamEvent {
 export class AnthropicProvider extends BaseLLMProvider {
   private modelsCache: LLMModel[] | null = null;
   private modelsCacheTime: number = 0;
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_TTL = CACHE.MODELS_TTL_MS;
   private providerName: string;
 
   constructor(
@@ -251,9 +252,12 @@ export class AnthropicProvider extends BaseLLMProvider {
 
       onChunk({ content: '', done: true });
 
+      // Estimate tokens if not provided by the API
+      const estimatedTokens = tokensUsed > 0 ? tokensUsed : countTokens(fullContent);
+
       return {
         content: fullContent,
-        tokensUsed,
+        tokensUsed: estimatedTokens,
         finishReason,
         model,
       };

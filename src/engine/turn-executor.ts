@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Turn Executor
-// Version: 1.6.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -111,11 +110,21 @@ export class TurnExecutor {
       });
 
       if (approvalMode === 'approval') {
-        // Emit event for approval and wait
+        // LIMITATION: Async approval flow not yet implemented.
+        // In approval mode, tool calls are recorded as "pending" and the conversation
+        // continues without the tool result. Users can view pending tools in the UI.
+        // 
+        // Future enhancement: Implement pause-and-wait mechanism where the turn
+        // executor pauses, waits for user approval via eventBus, then resumes.
+        // This would require:
+        // 1. A Promise-based wait mechanism with timeout
+        // 2. UI to approve/reject pending tool calls
+        // 3. Resume logic to execute approved tools and inject results
         eventBus.emit('mcp:tool-call-pending', toolCallRecord);
-        // For now, in approval mode, we'll skip execution and let the UI handle it
-        // A future enhancement would be to pause and wait for approval
-        results.push(`**Tool Pending Approval: ${call.tool}**\nThis tool call is waiting for user approval.`);
+        results.push(`**⏳ Tool Pending Approval: ${call.tool}**\n` +
+          `Arguments: ${JSON.stringify(call.arguments, null, 2)}\n` +
+          `_This tool call requires manual approval before execution. ` +
+          `The conversation will continue without the tool result._`);
         continue;
       }
 
@@ -170,10 +179,6 @@ export class TurnExecutor {
   ): Promise<TurnResult> {
     // Create abort controller
     this.abortController = new AbortController();
-
-    // #region debug log H2
-    (() => { const payload = {location:'src/engine/turn-executor.ts:execute',message:'TurnExecutor.execute() enter',data:{conversationId:this.conversation.id,turnId:turn.id,agentId:agent.id,providerId:agent.llmProviderId,model:agent.modelId,streaming:Boolean(onStreamChunk)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-    // #endregion
 
     try {
       // Mark turn as running
@@ -232,10 +237,6 @@ export class TurnExecutor {
         fullContent = response.content;
       }
 
-      // #region debug log H2
-      (() => { const payload = {location:'src/engine/turn-executor.ts:execute',message:'LLM request completed',data:{conversationId:this.conversation.id,turnId:turn.id,agentId:agent.id,streaming:Boolean(onStreamChunk),chunkCount,fullContentLen:fullContent.length,finishReason:response.finishReason ?? null,tokensUsed:response.tokensUsed ?? 0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-      // #endregion
-
       // Guard against empty responses
       if (!fullContent.trim()) {
         throw new Error('Empty response from LLM provider');
@@ -290,10 +291,6 @@ export class TurnExecutor {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-      // #region debug log H2
-      (() => { const payload = {location:'src/engine/turn-executor.ts:execute',message:'TurnExecutor.execute() error',data:{conversationId:this.conversation.id,turnId:turn.id,agentId:agent.id,error:errorMessage,isAbortError:(error instanceof DOMException && error.name==='AbortError')},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-      // #endregion
       
       // Check if aborted
       if (error instanceof DOMException && error.name === 'AbortError') {

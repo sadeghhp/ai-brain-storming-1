@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Conversation State Machine
-// Version: 1.1.0
 // ============================================
 
 import type { ConversationStatus } from '../types';

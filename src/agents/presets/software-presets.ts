@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Software Development Presets
-// Version: 1.0.0
 // ============================================
 
 import type { AgentPreset } from '../../types';

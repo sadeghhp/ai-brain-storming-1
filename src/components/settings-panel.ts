@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Settings Panel Component
-// Version: 3.2.0
 // ============================================
 
 import { settingsStorage, providerStorage, presetStorage, mcpServerStorage } from '../storage/storage-manager';

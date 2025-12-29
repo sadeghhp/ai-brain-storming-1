@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Prompt Builder
-// Version: 1.6.0
 // ============================================
 
 import type { LLMMessage } from './types';
@@ -9,20 +8,7 @@ import { countTokens, truncateMessagesToFit } from './token-counter';
 import { getStrategyById, getAgentInstructions } from '../strategies/starting-strategies';
 import { languageService } from '../prompts/language-service';
 import type { PromptTemplates } from '../prompts/types';
-
-// Word limit defaults
-const DEFAULT_WORD_LIMIT = 150;
-const DEFAULT_EXTENDED_CHANCE = 20; // 20% chance
-const DEFAULT_EXTENDED_MULTIPLIER = 3;
-
-// Depth configuration numeric defaults (prompts come from language service)
-const DEPTH_NUMERIC_CONFIGS: Record<ConversationDepth, { wordLimit: number; extendedMultiplier: number; extendedChance: number }> = {
-  brief: { wordLimit: 40, extendedMultiplier: 2, extendedChance: 10 },
-  concise: { wordLimit: 85, extendedMultiplier: 2, extendedChance: 15 },
-  standard: { wordLimit: 150, extendedMultiplier: 3, extendedChance: 20 },
-  detailed: { wordLimit: 300, extendedMultiplier: 2, extendedChance: 25 },
-  deep: { wordLimit: 500, extendedMultiplier: 2, extendedChance: 30 },
-};
+import { WORD_LIMIT, DEPTH_CONFIGS } from '../constants';
 
 // ----- Conversation Depth Configuration -----
 
@@ -43,7 +29,7 @@ export interface DepthConfig {
  */
 export function getDepthConfig(depth?: ConversationDepth, targetLanguage?: string): DepthConfig {
   const depthKey = depth ?? 'standard';
-  const numericConfig = DEPTH_NUMERIC_CONFIGS[depthKey];
+  const numericConfig = DEPTH_CONFIGS[depthKey];
   const prompts = languageService.getPromptsSync(targetLanguage || '');
   const depthPrompts = prompts.agent.depthConfigs[depthKey];
   
@@ -93,15 +79,15 @@ export function calculateWordLimit(
   const baseLimit = agent.wordLimit 
     ?? (depthConfig?.wordLimit) 
     ?? conversation.defaultWordLimit 
-    ?? DEFAULT_WORD_LIMIT;
+    ?? WORD_LIMIT.DEFAULT;
   
   // Get multiplier and chance from depth config or conversation settings
   const multiplier = depthConfig?.extendedMultiplier 
     ?? conversation.extendedMultiplier 
-    ?? DEFAULT_EXTENDED_MULTIPLIER;
+    ?? WORD_LIMIT.EXTENDED_MULTIPLIER;
   const chance = depthConfig?.extendedChance 
     ?? conversation.extendedSpeakingChance 
-    ?? DEFAULT_EXTENDED_CHANCE;
+    ?? WORD_LIMIT.EXTENDED_CHANCE;
   
   // First speaker always gets extended limit to properly set up the discussion
   if (isFirstTurn) {

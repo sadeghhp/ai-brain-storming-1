@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Conversation Engine
-// Version: 2.13.0
 // ============================================
 
 import { Agent } from '../agents/agent';
@@ -109,10 +108,6 @@ export class ConversationEngine {
         return;
       }
        enteredRunningState = true;
-
-      // #region debug log H0
-      (() => { const payload = {location:'src/engine/conversation-engine.ts:start',message:'start() called',data:{conversationId:this.conversation.id,status:this.stateMachine.currentStatus,currentRound:this.conversation.currentRound,speedMs:this.conversation.speedMs,maxRounds:this.conversation.maxRounds ?? null},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H0'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-      // #endregion
 
       // Reset tracking for new run
       this.completedAgentsInRound.clear();
@@ -498,16 +493,9 @@ export class ConversationEngine {
    * Execute a single turn
    */
   private async executeTurn(schedule: TurnSchedule): Promise<TurnResult> {
-    // #region debug log H1
-    (() => { const payload = {location:'src/engine/conversation-engine.ts:executeTurn',message:'executeTurn() enter',data:{conversationId:this.conversation.id,round:schedule.round,sequence:schedule.sequence,agentId:schedule.agentId,engineRound:this.conversation.currentRound,completedAgentsInRoundSize:this.completedAgentsInRound.size},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-    // #endregion
-
     // Check idempotency - skip if already completed
     const isCompleted = await this.turnManager?.isTurnCompleted(schedule.round, schedule.sequence);
     if (isCompleted) {
-      // #region debug log H1
-      (() => { const payload = {location:'src/engine/conversation-engine.ts:executeTurn',message:'executeTurn() skipping completed turn',data:{conversationId:this.conversation.id,round:schedule.round,sequence:schedule.sequence,agentId:schedule.agentId},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-      // #endregion
       console.log(`[Engine] Skipping completed turn: round=${schedule.round}, seq=${schedule.sequence}`);
       return { success: true, tokensUsed: 0 };
     }
@@ -542,10 +530,6 @@ export class ConversationEngine {
       // Emit stream chunk event for UI components
       eventBus.emit('stream:chunk', { agentId: agent.id, content: chunk });
     });
-
-    // #region debug log H2
-    (() => { const payload = {location:'src/engine/conversation-engine.ts:executeTurn',message:'executeTurn() got TurnExecutor result',data:{conversationId:this.conversation.id,round:schedule.round,sequence:schedule.sequence,agentId:agent.id,success:result.success,tokensUsed:result.tokensUsed,messageLen:result.message?.content?.length ?? 0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-    // #endregion
 
     // Clear streaming content and emit completion
     this.streamingContent.delete(agent.id);

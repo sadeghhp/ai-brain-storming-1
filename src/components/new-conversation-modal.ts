@@ -1,11 +1,10 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.12.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
 import { presetStorage, providerStorage, settingsStorage, mcpServerStorage } from '../storage/storage-manager';
-import { presetCategories } from '../agents/presets';
+import { presetCategories, getRecommendedPresets, getSoftwareTeamPresets, getFinanceTeamPresets, getAITeamPresets, getGeneralTeamPresets, getCriticalThinkingTeamPresets } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
@@ -13,9 +12,22 @@ import { startingStrategies, getStrategyById, buildOpeningStatement, buildGround
 import { conversationTemplates, templateCategories, getTemplateById } from '../strategies/conversation-templates';
 import { getEnabledLanguages, type Language } from '../utils/languages';
 import { languageService, type TranslationProgress } from '../prompts/language-service';
+import { validateSubject, validateGoal, validateAgentCount, sanitizeInput } from '../utils/validation';
 import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId, ConversationDepth, AppSettings, MCPServer, ToolApprovalMode } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
+
+// Quick team definitions for preset selection
+const QUICK_TEAMS = [
+  { id: 'software', name: 'Software Team', icon: '💻', getPresets: getSoftwareTeamPresets },
+  { id: 'finance', name: 'Finance Team', icon: '📈', getPresets: getFinanceTeamPresets },
+  { id: 'ai', name: 'AI/ML Team', icon: '🤖', getPresets: getAITeamPresets },
+  { id: 'general', name: 'General', icon: '🎯', getPresets: getGeneralTeamPresets },
+  { id: 'critical', name: 'Critical Thinking', icon: '🔍', getPresets: getCriticalThinkingTeamPresets },
+] as const;
+
+// View mode for preset browsing
+type PresetViewMode = 'grid' | 'card';
 
 // Depth level configuration for UI display
 const DEPTH_LEVELS: Array<{ id: ConversationDepth; name: string; icon: string; description: string }> = [
@@ -84,6 +96,10 @@ export class NewConversationModal extends HTMLElement {
   private mcpServers: MCPServer[] = [];
   private selectedMcpServerIds: Set<string> = new Set();
   private mcpToolApprovalMode: ToolApprovalMode = 'auto';
+  // Agent selection enhancements
+  private presetSearchQuery: string = '';
+  private presetViewMode: PresetViewMode = 'grid';
+  private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   private elId(suffix: string): string {
     return `${this.uid}-${suffix}`;
@@ -256,6 +272,35 @@ export class NewConversationModal extends HTMLElement {
     }
   }
 
+  /**
+   * Show validation error for a field
+   */
+  private showValidationError(fieldId: string, message: string): void {
+    const field = this.shadowRoot?.getElementById(fieldId) as HTMLInputElement | HTMLTextAreaElement;
+    if (field) {
+      field.classList.add('error');
+      field.focus();
+      
+      // Show error message
+      let errorEl = field.parentElement?.querySelector('.validation-error') as HTMLElement;
+      if (!errorEl) {
+        errorEl = document.createElement('span');
+        errorEl.className = 'validation-error';
+        errorEl.style.cssText = 'color: var(--error-color, #ef4444); font-size: 0.875rem; margin-top: 0.25rem; display: block;';
+        field.parentElement?.appendChild(errorEl);
+      }
+      errorEl.textContent = message;
+      
+      // Clear error on input
+      const clearError = () => {
+        field.classList.remove('error');
+        errorEl?.remove();
+        field.removeEventListener('input', clearError);
+      };
+      field.addEventListener('input', clearError);
+    }
+  }
+
   private close() {
     this.setAttribute('open', 'false');
     this.selectedPresets.clear();
@@ -276,6 +321,58 @@ export class NewConversationModal extends HTMLElement {
     this.selectedDepth = 'standard';
     // Reset language state
     this.selectedLanguage = '';
+    // Reset agent selection state
+    this.presetSearchQuery = '';
+    this.presetViewMode = 'grid';
+  }
+
+  /**
+   * Filter presets based on search query
+   */
+  private getFilteredPresets(): AgentPreset[] {
+    if (!this.presetSearchQuery.trim()) {
+      return this.presets;
+    }
+    const query = this.presetSearchQuery.toLowerCase();
+    return this.presets.filter(p =>
+      p.name.toLowerCase().includes(query) ||
+      p.expertise.toLowerCase().includes(query) ||
+      p.description.toLowerCase().includes(query) ||
+      p.category.toLowerCase().includes(query)
+    );
+  }
+
+  /**
+   * Get recommended presets based on subject/goal
+   */
+  private getRecommendedPresetsForTopic(): AgentPreset[] {
+    const topic = `${this.draftSubject} ${this.draftGoal}`.trim();
+    if (!topic) return [];
+    const recommendations = getRecommendedPresets(topic);
+    // Filter to only include presets that are visible
+    const visibleIds = new Set(this.presets.map(p => p.id));
+    return recommendations.filter(p => visibleIds.has(p.id)).slice(0, 6);
+  }
+
+  /**
+   * Apply a quick team preset selection
+   */
+  private applyQuickTeam(teamId: string) {
+    const team = QUICK_TEAMS.find(t => t.id === teamId);
+    if (!team) return;
+    
+    const teamPresets = team.getPresets();
+    const visibleIds = new Set(this.presets.map(p => p.id));
+    
+    // Clear current selection and add team presets
+    this.selectedPresets.clear();
+    for (const preset of teamPresets) {
+      if (visibleIds.has(preset.id)) {
+        this.selectedPresets.add(preset.id);
+      }
+    }
+    
+    this.renderPreservingDraft();
   }
 
   /**
@@ -791,6 +888,467 @@ export class NewConversationModal extends HTMLElement {
 
         .preset-category-content.expanded {
           display: flex;
+        }
+
+        /* Search and View Controls */
+        .preset-controls {
+          display: flex;
+          gap: var(--space-2);
+          margin-bottom: var(--space-3);
+        }
+
+        .preset-search-wrapper {
+          flex: 1;
+          position: relative;
+        }
+
+        .preset-search-icon {
+          position: absolute;
+          left: var(--space-3);
+          top: 50%;
+          transform: translateY(-50%);
+          color: var(--color-text-tertiary);
+          pointer-events: none;
+        }
+
+        .preset-search {
+          width: 100%;
+          padding: var(--space-2) var(--space-3);
+          padding-left: 36px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          color: var(--color-text-primary);
+          font-size: var(--text-sm);
+          transition: all var(--transition-fast);
+        }
+
+        .preset-search:focus {
+          outline: none;
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 3px var(--color-primary-dim);
+        }
+
+        .preset-search::placeholder {
+          color: var(--color-text-tertiary);
+        }
+
+        .view-toggle {
+          display: flex;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          padding: 2px;
+        }
+
+        .view-toggle-btn {
+          padding: var(--space-2);
+          background: transparent;
+          border: none;
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .view-toggle-btn:hover {
+          color: var(--color-text-primary);
+        }
+
+        .view-toggle-btn.active {
+          background: var(--color-primary);
+          color: white;
+        }
+
+        /* Quick Team Buttons */
+        .quick-teams {
+          display: flex;
+          gap: var(--space-2);
+          flex-wrap: wrap;
+          margin-bottom: var(--space-3);
+        }
+
+        .quick-team-btn {
+          padding: var(--space-1) var(--space-3);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-full);
+          color: var(--color-text-secondary);
+          font-size: var(--text-xs);
+          font-weight: var(--font-medium);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+          white-space: nowrap;
+        }
+
+        .quick-team-btn:hover {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .quick-team-btn .team-icon {
+          font-size: var(--text-sm);
+        }
+
+        /* Selected Agents Preview */
+        .selected-preview {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          padding: var(--space-3);
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          margin-bottom: var(--space-3);
+          overflow-x: auto;
+        }
+
+        .selected-preview-label {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        .selected-agents-strip {
+          display: flex;
+          gap: var(--space-2);
+          flex: 1;
+          overflow-x: auto;
+          padding: var(--space-1) 0;
+        }
+
+        .selected-agent-chip {
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+          padding: var(--space-1) var(--space-2);
+          background: var(--color-primary-dim);
+          border: 1px solid var(--color-primary);
+          border-radius: var(--radius-full);
+          font-size: var(--text-xs);
+          color: var(--color-primary);
+          white-space: nowrap;
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          flex-shrink: 0;
+        }
+
+        .selected-agent-chip:hover {
+          background: var(--color-primary);
+          color: white;
+        }
+
+        .selected-agent-chip .remove-icon {
+          width: 12px;
+          height: 12px;
+          opacity: 0.7;
+        }
+
+        .selected-agent-chip:hover .remove-icon {
+          opacity: 1;
+        }
+
+        .clear-all-btn {
+          padding: var(--space-1) var(--space-2);
+          background: transparent;
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          font-size: var(--text-xs);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        .clear-all-btn:hover {
+          border-color: var(--color-error);
+          color: var(--color-error);
+        }
+
+        /* Smart Recommendations */
+        .recommendations-section {
+          margin-bottom: var(--space-3);
+        }
+
+        .recommendations-label {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          margin-bottom: var(--space-2);
+          display: flex;
+          align-items: center;
+          gap: var(--space-1);
+        }
+
+        .recommendations-strip {
+          display: flex;
+          gap: var(--space-2);
+          flex-wrap: wrap;
+        }
+
+        .recommendation-chip {
+          padding: var(--space-1) var(--space-2);
+          background: linear-gradient(135deg, var(--color-primary-dim), rgba(139, 92, 246, 0.1));
+          border: 1px dashed var(--color-primary);
+          border-radius: var(--radius-md);
+          color: var(--color-primary);
+          font-size: var(--text-xs);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .recommendation-chip:hover {
+          background: var(--color-primary-dim);
+          border-style: solid;
+        }
+
+        .recommendation-chip.selected {
+          background: var(--color-primary);
+          border-style: solid;
+          color: white;
+        }
+
+        /* Card View Mode */
+        .preset-cards-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+          gap: var(--space-2);
+          max-height: 280px;
+          overflow-y: auto;
+          padding: var(--space-2);
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+        }
+
+        .preset-card {
+          padding: var(--space-3);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .preset-card:hover {
+          border-color: var(--color-border-strong);
+          background: var(--color-surface-hover);
+          transform: translateY(-1px);
+        }
+
+        .preset-card.selected {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 1px var(--color-primary);
+        }
+
+        .preset-card-header {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          margin-bottom: var(--space-2);
+        }
+
+        .preset-card-icon {
+          font-size: var(--text-lg);
+        }
+
+        .preset-card-name {
+          font-weight: var(--font-medium);
+          font-size: var(--text-sm);
+          color: var(--color-text-primary);
+          flex: 1;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .preset-card-checkbox {
+          width: 16px;
+          height: 16px;
+          border: 2px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .preset-card.selected .preset-card-checkbox {
+          background: var(--color-primary);
+          border-color: var(--color-primary);
+        }
+
+        .preset-card-expertise {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          line-height: 1.4;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+
+        .preset-card-meta {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          margin-top: var(--space-2);
+          padding-top: var(--space-2);
+          border-top: 1px solid var(--color-border);
+        }
+
+        .preset-card-badge {
+          font-size: 9px;
+          padding: 2px 6px;
+          background: var(--color-bg-tertiary);
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+        }
+
+        /* Search Results Empty State */
+        .search-empty {
+          padding: var(--space-6);
+          text-align: center;
+          color: var(--color-text-tertiary);
+          font-size: var(--text-sm);
+        }
+
+        .search-empty-icon {
+          font-size: var(--text-3xl);
+          margin-bottom: var(--space-2);
+          opacity: 0.5;
+        }
+
+        /* Enhanced Chip with Tooltip */
+        .preset-chip-enhanced {
+          position: relative;
+        }
+
+        .preset-chip-tooltip {
+          position: absolute;
+          bottom: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-bg-primary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          font-size: var(--text-xs);
+          color: var(--color-text-secondary);
+          white-space: normal;
+          width: 200px;
+          max-width: 200px;
+          text-align: left;
+          opacity: 0;
+          visibility: hidden;
+          transition: opacity var(--transition-fast), visibility var(--transition-fast);
+          z-index: 100;
+          pointer-events: none;
+          margin-bottom: var(--space-1);
+        }
+
+        .preset-chip-enhanced:hover .preset-chip-tooltip {
+          opacity: 1;
+          visibility: visible;
+        }
+
+        .preset-chip-tooltip::after {
+          content: '';
+          position: absolute;
+          top: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          border: 6px solid transparent;
+          border-top-color: var(--color-border);
+        }
+
+        /* Drag and Drop for Agent Cards */
+        .agent-card.draggable {
+          cursor: grab;
+        }
+
+        .agent-card.draggable:active {
+          cursor: grabbing;
+        }
+
+        .agent-card.dragging {
+          opacity: 0.5;
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+        }
+
+        .agent-card.drag-over {
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 2px var(--color-primary-dim);
+        }
+
+        .agent-card.drag-over-top::before {
+          content: '';
+          position: absolute;
+          top: -4px;
+          left: 0;
+          right: 0;
+          height: 3px;
+          background: var(--color-primary);
+          border-radius: var(--radius-full);
+        }
+
+        .agent-card.drag-over-bottom::after {
+          content: '';
+          position: absolute;
+          bottom: -4px;
+          left: 0;
+          right: 0;
+          height: 3px;
+          background: var(--color-primary);
+          border-radius: var(--radius-full);
+        }
+
+        .drag-handle {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-1);
+          color: var(--color-text-tertiary);
+          cursor: grab;
+          transition: color var(--transition-fast);
+          flex-shrink: 0;
+        }
+
+        .drag-handle:hover {
+          color: var(--color-text-primary);
+        }
+
+        .drag-handle:active {
+          cursor: grabbing;
+        }
+
+        .agent-order-badge {
+          position: absolute;
+          left: -8px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 18px;
+          height: 18px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-full);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          font-weight: var(--font-bold);
+          color: var(--color-text-tertiary);
         }
 
         .provider-warning {
@@ -1708,10 +2266,84 @@ export class NewConversationModal extends HTMLElement {
                     <label class="form-label" style="margin-bottom: 0;">Select Agents</label>
                     <span class="preset-count">${this.selectedPresets.size} selected</span>
                   </div>
-                  <div class="preset-grid-wrapper">
-                    <div class="preset-grid">
-                      ${this.renderPresetCategoriesForSelection()}
+
+                  <!-- Quick Team Presets -->
+                  <div class="quick-teams">
+                    ${QUICK_TEAMS.map(team => `
+                      <button type="button" class="quick-team-btn" data-team-id="${team.id}">
+                        <span class="team-icon">${team.icon}</span>
+                        ${team.name}
+                      </button>
+                    `).join('')}
+                  </div>
+
+                  <!-- Selected Agents Preview -->
+                  ${this.selectedPresets.size > 0 ? `
+                    <div class="selected-preview">
+                      <span class="selected-preview-label">Team:</span>
+                      <div class="selected-agents-strip">
+                        ${Array.from(this.selectedPresets).map(id => {
+                          const preset = this.presets.find(p => p.id === id);
+                          if (!preset) return '';
+                          return `
+                            <div class="selected-agent-chip" data-preset-id="${id}" title="Click to remove">
+                              ${preset.name}
+                              <svg class="remove-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                              </svg>
+                            </div>
+                          `;
+                        }).join('')}
+                      </div>
+                      <button type="button" class="clear-all-btn" id="clear-all-agents">Clear all</button>
                     </div>
+                  ` : ''}
+
+                  <!-- Search and View Controls -->
+                  <div class="preset-controls">
+                    <div class="preset-search-wrapper">
+                      <svg class="preset-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                      </svg>
+                      <input type="text" class="preset-search" id="preset-search" 
+                             placeholder="Search agents by name or expertise..." 
+                             value="${this.presetSearchQuery}">
+                    </div>
+                    <div class="view-toggle">
+                      <button type="button" class="view-toggle-btn ${this.presetViewMode === 'grid' ? 'active' : ''}" 
+                              data-view="grid" title="Grid view">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <rect x="3" y="3" width="7" height="7"/>
+                          <rect x="14" y="3" width="7" height="7"/>
+                          <rect x="14" y="14" width="7" height="7"/>
+                          <rect x="3" y="14" width="7" height="7"/>
+                        </svg>
+                      </button>
+                      <button type="button" class="view-toggle-btn ${this.presetViewMode === 'card' ? 'active' : ''}" 
+                              data-view="card" title="Card view">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                          <line x1="3" y1="9" x2="21" y2="9"/>
+                          <line x1="3" y1="15" x2="21" y2="15"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Smart Recommendations -->
+                  ${this.renderRecommendations()}
+
+                  <!-- Preset Grid/Cards -->
+                  <div class="preset-grid-wrapper">
+                    ${this.presetViewMode === 'grid' ? `
+                      <div class="preset-grid">
+                        ${this.renderPresetCategoriesForSelection()}
+                      </div>
+                    ` : `
+                      ${this.renderPresetCardsView()}
+                    `}
                   </div>
                 </div>
               ` : `
@@ -1727,7 +2359,7 @@ export class NewConversationModal extends HTMLElement {
                       No agents added yet. Add at least 2 agents to start a conversation.
                     </div>
                   ` : `
-                    <div class="agent-list">
+                    <div class="agent-list" id="sortable-agent-list">
                       ${this.customAgents.map((agent, index) => {
                         const provider = this.providers.find(p => p.id === agent.llmProviderId);
                         const model = provider?.models.find(m => m.id === agent.modelId);
@@ -1735,7 +2367,15 @@ export class NewConversationModal extends HTMLElement {
                         const color = this.getAgentColor(index);
                         
                         return `
-                          <div class="agent-card" data-index="${index}">
+                          <div class="agent-card draggable" data-index="${index}" draggable="true">
+                            <div class="agent-order-badge">${index + 1}</div>
+                            <div class="drag-handle" title="Drag to reorder">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="8" y1="6" x2="16" y2="6"/>
+                                <line x1="8" y1="12" x2="16" y2="12"/>
+                                <line x1="8" y1="18" x2="16" y2="18"/>
+                              </svg>
+                            </div>
                             <div class="agent-avatar" style="background: ${color}20; color: ${color};">
                               ${initials}
                             </div>
@@ -1805,21 +2445,25 @@ export class NewConversationModal extends HTMLElement {
     this.hydrateDraftToDom();
   }
 
-  private getPresetsByCategory(): Map<string, AgentPreset[]> {
+  private getPresetsByCategory(presetsToGroup?: AgentPreset[]): Map<string, AgentPreset[]> {
     const grouped = new Map<string, AgentPreset[]>();
+    const presetsSource = presetsToGroup || this.presets;
     
     // Initialize all categories
     for (const category of presetCategories) {
-      if (category.id !== 'custom') {
-        grouped.set(category.id, []);
-      }
+      grouped.set(category.id, []);
     }
     
     // Group presets by category
-    for (const preset of this.presets) {
+    for (const preset of presetsSource) {
       const categoryPresets = grouped.get(preset.category);
       if (categoryPresets) {
         categoryPresets.push(preset);
+      } else {
+        // If preset has unknown category, bucket it into 'custom'
+        const customPresets = grouped.get('custom') || [];
+        customPresets.push(preset);
+        grouped.set('custom', customPresets);
       }
     }
     
@@ -1827,10 +2471,28 @@ export class NewConversationModal extends HTMLElement {
   }
 
   private renderPresetCategoriesForSelection(): string {
-    const grouped = this.getPresetsByCategory();
+    const filteredPresets = this.getFilteredPresets();
+    const grouped = this.getPresetsByCategory(filteredPresets);
     
-    // Auto-expand first category with presets if none expanded
-    if (this.expandedCategories.size === 0) {
+    // If searching and no results
+    if (this.presetSearchQuery && filteredPresets.length === 0) {
+      return `
+        <div class="search-empty">
+          <div class="search-empty-icon">🔍</div>
+          No agents found matching "${this.presetSearchQuery}"
+        </div>
+      `;
+    }
+    
+    // If searching, expand all categories with matches
+    if (this.presetSearchQuery) {
+      for (const [categoryId, presets] of grouped) {
+        if (presets.length > 0) {
+          this.expandedCategories.add(categoryId);
+        }
+      }
+    } else if (this.expandedCategories.size === 0) {
+      // Auto-expand first category with presets if none expanded
       for (const [categoryId, presets] of grouped) {
         if (presets.length > 0) {
           this.expandedCategories.add(categoryId);
@@ -1840,7 +2502,6 @@ export class NewConversationModal extends HTMLElement {
     }
     
     return presetCategories
-      .filter(cat => cat.id !== 'custom')
       .map(category => {
         const presets = grouped.get(category.id) || [];
         if (presets.length === 0) return ''; // Hide empty categories
@@ -1862,14 +2523,99 @@ export class NewConversationModal extends HTMLElement {
             </div>
             <div class="preset-category-content ${isExpanded ? 'expanded' : ''}">
               ${presets.map(p => `
-                <div class="preset-chip ${this.selectedPresets.has(p.id) ? 'selected' : ''}" data-preset-id="${p.id}">
-                  ${p.name}
+                <div class="preset-chip-enhanced">
+                  <div class="preset-chip ${this.selectedPresets.has(p.id) ? 'selected' : ''}" data-preset-id="${p.id}">
+                    ${p.name}
+                  </div>
+                  <div class="preset-chip-tooltip">
+                    <strong>${p.name}</strong><br>
+                    ${p.expertise.split(',').slice(0, 3).join(', ')}
+                  </div>
                 </div>
               `).join('')}
             </div>
           </div>
         `;
       }).join('');
+  }
+
+  /**
+   * Render the card view for presets (alternative to accordion grid)
+   */
+  private renderPresetCardsView(): string {
+    const filteredPresets = this.getFilteredPresets();
+    
+    if (this.presetSearchQuery && filteredPresets.length === 0) {
+      return `
+        <div class="preset-cards-grid">
+          <div class="search-empty">
+            <div class="search-empty-icon">🔍</div>
+            No agents found matching "${this.presetSearchQuery}"
+          </div>
+        </div>
+      `;
+    }
+    
+    return `
+      <div class="preset-cards-grid">
+        ${filteredPresets.map(preset => {
+          const category = presetCategories.find(c => c.id === preset.category);
+          const isSelected = this.selectedPresets.has(preset.id);
+          const thinkingLabel = preset.defaultThinkingDepth <= 2 ? 'Quick' : preset.defaultThinkingDepth >= 4 ? 'Deep' : 'Balanced';
+          
+          return `
+            <div class="preset-card ${isSelected ? 'selected' : ''}" data-preset-id="${preset.id}">
+              <div class="preset-card-header">
+                <span class="preset-card-icon">${category?.icon || '🎯'}</span>
+                <span class="preset-card-name">${preset.name}</span>
+                <div class="preset-card-checkbox">
+                  ${isSelected ? `
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  ` : ''}
+                </div>
+              </div>
+              <div class="preset-card-expertise">${preset.expertise}</div>
+              <div class="preset-card-meta">
+                <span class="preset-card-badge">${thinkingLabel}</span>
+                <span class="preset-card-badge">${preset.thinkingStyle}</span>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  /**
+   * Render smart recommendations based on subject/goal
+   */
+  private renderRecommendations(): string {
+    const recommendations = this.getRecommendedPresetsForTopic();
+    
+    if (recommendations.length === 0) {
+      return '';
+    }
+    
+    return `
+      <div class="recommendations-section">
+        <div class="recommendations-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+          Recommended for your topic
+        </div>
+        <div class="recommendations-strip">
+          ${recommendations.map(p => `
+            <div class="recommendation-chip ${this.selectedPresets.has(p.id) ? 'selected' : ''}" 
+                 data-preset-id="${p.id}">
+              ${p.name}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
   }
 
   private getAgentColor(index: number): string {
@@ -1879,6 +2625,99 @@ export class NewConversationModal extends HTMLElement {
       '#06b6d4', '#0ea5e9', '#3b82f6',
     ];
     return colors[index % colors.length];
+  }
+
+  /**
+   * Set up drag and drop for agent reordering in Advanced mode
+   */
+  private setupDragAndDrop() {
+    const agentList = this.shadowRoot?.getElementById('sortable-agent-list');
+    if (!agentList) return;
+
+    let draggedElement: HTMLElement | null = null;
+    let draggedIndex: number = -1;
+
+    const cards = agentList.querySelectorAll('.agent-card.draggable');
+    
+    cards.forEach((card) => {
+      const cardEl = card as HTMLElement;
+
+      // Drag start
+      cardEl.addEventListener('dragstart', (e) => {
+        draggedElement = cardEl;
+        draggedIndex = parseInt(cardEl.getAttribute('data-index') || '-1');
+        cardEl.classList.add('dragging');
+        
+        // Set drag data
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', draggedIndex.toString());
+        }
+      });
+
+      // Drag end
+      cardEl.addEventListener('dragend', () => {
+        cardEl.classList.remove('dragging');
+        draggedElement = null;
+        draggedIndex = -1;
+        
+        // Remove all drag-over classes
+        cards.forEach(c => {
+          c.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+        });
+      });
+
+      // Drag over
+      cardEl.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (!draggedElement || draggedElement === cardEl) return;
+        
+        if (e.dataTransfer) {
+          e.dataTransfer.dropEffect = 'move';
+        }
+
+        // Determine if we're in the top or bottom half
+        const rect = cardEl.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const isTopHalf = (e as DragEvent).clientY < midY;
+
+        cardEl.classList.add('drag-over');
+        cardEl.classList.toggle('drag-over-top', isTopHalf);
+        cardEl.classList.toggle('drag-over-bottom', !isTopHalf);
+      });
+
+      // Drag leave
+      cardEl.addEventListener('dragleave', () => {
+        cardEl.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+      });
+
+      // Drop
+      cardEl.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (!draggedElement || draggedElement === cardEl) return;
+
+        const targetIndex = parseInt(cardEl.getAttribute('data-index') || '-1');
+        if (draggedIndex < 0 || targetIndex < 0) return;
+
+        // Determine insert position based on drop location
+        const rect = cardEl.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const isTopHalf = (e as DragEvent).clientY < midY;
+        
+        // Reorder the agents array
+        const [movedAgent] = this.customAgents.splice(draggedIndex, 1);
+        
+        // After removal, adjust targetIndex if dragged was before target
+        const adjustedTarget = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        // Insert before (top half) or after (bottom half) the adjusted target
+        const newIndex = isTopHalf ? adjustedTarget : adjustedTarget + 1;
+        
+        this.customAgents.splice(newIndex, 0, movedAgent);
+        
+        // Re-render to show new order
+        this.renderPreservingDraft();
+      });
+    });
   }
 
   private setupEventHandlers() {
@@ -2092,7 +2931,89 @@ export class NewConversationModal extends HTMLElement {
       });
     });
 
-    // Simple mode: Preset selection
+    // Search input with debounce
+    const searchInput = this.shadowRoot?.getElementById('preset-search') as HTMLInputElement | null;
+    searchInput?.addEventListener('input', () => {
+      if (this.searchDebounceTimer) {
+        clearTimeout(this.searchDebounceTimer);
+      }
+      this.searchDebounceTimer = setTimeout(() => {
+        this.presetSearchQuery = searchInput.value;
+        this.renderPreservingDraft();
+      }, 150);
+    });
+
+    // View toggle buttons
+    this.shadowRoot?.querySelectorAll('.view-toggle-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = btn.getAttribute('data-view') as PresetViewMode;
+        if (view && view !== this.presetViewMode) {
+          this.presetViewMode = view;
+          this.renderPreservingDraft();
+        }
+      });
+    });
+
+    // Quick team buttons
+    this.shadowRoot?.querySelectorAll('.quick-team-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const teamId = btn.getAttribute('data-team-id');
+        if (teamId) {
+          this.applyQuickTeam(teamId);
+        }
+      });
+    });
+
+    // Selected agent chips (click to remove)
+    this.shadowRoot?.querySelectorAll('.selected-agent-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const presetId = chip.getAttribute('data-preset-id');
+        if (presetId) {
+          this.selectedPresets.delete(presetId);
+          this.renderPreservingDraft();
+        }
+      });
+    });
+
+    // Clear all button
+    this.shadowRoot?.getElementById('clear-all-agents')?.addEventListener('click', () => {
+      this.selectedPresets.clear();
+      this.renderPreservingDraft();
+    });
+
+    // Recommendation chips
+    this.shadowRoot?.querySelectorAll('.recommendation-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const presetId = chip.getAttribute('data-preset-id');
+        if (!presetId) return;
+
+        if (this.selectedPresets.has(presetId)) {
+          this.selectedPresets.delete(presetId);
+        } else {
+          this.selectedPresets.add(presetId);
+        }
+        this.renderPreservingDraft();
+      });
+    });
+
+    // Preset cards (card view mode)
+    this.shadowRoot?.querySelectorAll('.preset-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const presetId = card.getAttribute('data-preset-id');
+        if (!presetId) return;
+
+        if (this.selectedPresets.has(presetId)) {
+          this.selectedPresets.delete(presetId);
+          card.classList.remove('selected');
+        } else {
+          this.selectedPresets.add(presetId);
+          card.classList.add('selected');
+        }
+        this.updateSelectionState();
+      });
+    });
+
+    // Simple mode: Preset selection (chips in grid view)
     this.shadowRoot?.querySelectorAll('.preset-chip').forEach(chip => {
       chip.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2142,6 +3063,9 @@ export class NewConversationModal extends HTMLElement {
         }
       });
     });
+
+    // Advanced mode: Drag and drop reordering
+    this.setupDragAndDrop();
 
     // Agent editor events
     const agentEditor = this.shadowRoot?.getElementById('agent-editor') as AgentEditorModal;
@@ -2417,14 +3341,26 @@ export class NewConversationModal extends HTMLElement {
   }
 
   private async createConversation() {
-    const subject = (this.shadowRoot?.getElementById('subject') as HTMLInputElement)?.value;
-    const goal = (this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement)?.value;
+    const rawSubject = (this.shadowRoot?.getElementById('subject') as HTMLInputElement)?.value;
+    const rawGoal = (this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement)?.value;
     const modeElement = this.shadowRoot?.querySelector('.mode-option.selected') as HTMLElement;
     const mode = (modeElement?.getAttribute('data-mode') || 'round-robin') as ConversationMode;
 
-    if (!subject || !goal) {
+    // Validate and sanitize inputs
+    const subjectValidation = validateSubject(rawSubject);
+    if (!subjectValidation.valid) {
+      this.showValidationError('subject', subjectValidation.error || 'Invalid subject');
       return;
     }
+
+    const goalValidation = validateGoal(rawGoal);
+    if (!goalValidation.valid) {
+      this.showValidationError('goal', goalValidation.error || 'Invalid goal');
+      return;
+    }
+
+    const subject = sanitizeInput(rawSubject);
+    const goal = sanitizeInput(rawGoal);
 
     let agentConfigs: Array<{
       presetId?: string;
@@ -2439,7 +3375,9 @@ export class NewConversationModal extends HTMLElement {
 
     if (this.isAdvancedMode) {
       // Advanced mode: use custom agents
-      if (this.customAgents.length < 2) {
+      const agentCountValidation = validateAgentCount(this.customAgents.length);
+      if (!agentCountValidation.valid) {
+        alert(agentCountValidation.error || 'Invalid number of agents');
         return;
       }
 

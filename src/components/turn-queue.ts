@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Turn Queue Component
-// Version: 1.0.0
 // ============================================
 
 import { agentStorage } from '../storage/storage-manager';

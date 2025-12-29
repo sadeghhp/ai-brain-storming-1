@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - App Shell Component
-// Version: 1.1.0
 // ============================================
 
 import { initializeDatabase } from '../storage/db';

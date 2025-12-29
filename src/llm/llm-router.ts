@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - LLM Router
-// Version: 2.1.0
 // ============================================
 
 import { OpenAIProvider } from './providers/openai-provider';

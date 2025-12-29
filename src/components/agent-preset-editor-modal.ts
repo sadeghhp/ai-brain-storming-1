@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Agent Preset Editor Modal
-// Version: 1.1.0
 // ============================================
 
 import { presetStorage } from '../storage/storage-manager';

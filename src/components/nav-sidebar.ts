@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Navigation Sidebar Component
-// Version: 1.2.0
 // ============================================
 
 import { conversationStorage } from '../storage/storage-manager';

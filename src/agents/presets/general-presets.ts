@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - General Purpose Presets
-// Version: 1.0.0
 // ============================================
 
 import type { AgentPreset } from '../../types';

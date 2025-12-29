@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Database Layer (Dexie/IndexedDB)
-// Version: 2.3.0
 // ============================================
 
 import Dexie, { type Table } from 'dexie';

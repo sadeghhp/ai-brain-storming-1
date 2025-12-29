@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Strategies Module Index
-// Version: 1.0.0
 // ============================================
 
 // Re-export StartingStrategyId from types for convenience

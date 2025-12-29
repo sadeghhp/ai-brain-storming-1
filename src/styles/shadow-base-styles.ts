@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Shared Shadow DOM Base Styles
-// Version: 1.0.0
 // ============================================
 // Provides consistent scrollbar styling and box-sizing reset
 // for Shadow DOM components (Chromium + Firefox).
