@@ -333,6 +333,7 @@ export interface AppEvents {
   'conversation:updated': Conversation;
   'conversation:deleted': string;
   'conversation:selected': string;
+  'conversation:closed': string;
   'conversation:started': string;
   'conversation:paused': string;
   'conversation:resumed': string;

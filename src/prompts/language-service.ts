@@ -5,6 +5,7 @@
 
 import type { PromptTemplates, TemplateParams, LanguageCode } from './types';
 import englishPrompts from './en.json';
+import persianPrompts from './persian.json';
 import { llmRouter } from '../llm/llm-router';
 
 const PROMPTS_DB_NAME = 'PromptTemplatesDB';
@@ -36,6 +37,9 @@ class LanguageServiceImpl {
   constructor() {
     // Initialize English prompts in cache
     this.cache.set('', englishPrompts as PromptTemplates);
+    
+    // Initialize Persian prompts in cache (bundled)
+    this.cache.set('Persian', persianPrompts as PromptTemplates);
     
     // Initialize IndexedDB for other languages
     this.dbReady = this.initDB();

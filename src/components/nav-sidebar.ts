@@ -455,7 +455,15 @@ export class NavSidebar extends HTMLElement {
         const isArchived = btn.getAttribute('data-archived') === 'true';
         
         if (id) {
+          const wasArchiving = !isArchived; // true if we're archiving (not unarchiving)
           await conversationStorage.archive(id, !isArchived);
+          
+          // If we archived the currently selected conversation, close it
+          if (wasArchiving && id === this.selectedId) {
+            this.selectedId = null;
+            eventBus.emit('conversation:closed', id);
+          }
+          
           await this.loadConversations();
         }
       });

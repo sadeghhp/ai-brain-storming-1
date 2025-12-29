@@ -64,6 +64,11 @@ export class AppShell extends HTMLElement {
       this.renderContent();
     });
 
+    eventBus.on('conversation:closed', () => {
+      this.currentConversationId = null;
+      this.renderContent();
+    });
+
     eventBus.on('settings:open', () => {
       this.currentView = 'settings';
       this.renderContent();

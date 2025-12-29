@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Export Utilities
-// Version: 1.1.0
+// Version: 1.2.0
 // ============================================
 
 import { conversationStorage, messageStorage, agentStorage, resultDraftStorage, presetStorage } from '../storage/storage-manager';
@@ -279,5 +279,46 @@ export async function importPresets(jsonContent: string): Promise<number> {
 export async function downloadPresets(): Promise<void> {
   const content = await exportPresets();
   downloadAsFile(content, 'ai-brainstorm-presets.json', 'application/json');
+}
+
+/**
+ * Export selected presets by IDs
+ */
+export async function exportSelectedPresets(presetIds: string[]): Promise<string> {
+  const allPresets = await presetStorage.getCustom();
+  const selected = allPresets.filter(p => presetIds.includes(p.id));
+
+  if (selected.length === 0) {
+    throw new Error('No valid custom presets found for the selected IDs');
+  }
+
+  const exportData: PresetExport = {
+    version: '1.0.0',
+    exportedAt: new Date().toISOString(),
+    presets: selected,
+  };
+
+  return JSON.stringify(exportData, null, 2);
+}
+
+/**
+ * Download selected presets as file
+ */
+export async function downloadSelectedPresets(presetIds: string[]): Promise<void> {
+  const content = await exportSelectedPresets(presetIds);
+  const data = JSON.parse(content) as PresetExport;
+  
+  // Generate filename based on selection
+  let filename: string;
+  if (data.presets.length === 1) {
+    // Single preset: use preset name
+    const safeName = data.presets[0].name.slice(0, 30).replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    filename = `preset-${safeName}.json`;
+  } else {
+    // Multiple presets: use count
+    filename = `ai-brainstorm-presets-${data.presets.length}.json`;
+  }
+  
+  downloadAsFile(content, filename, 'application/json');
 }
 
