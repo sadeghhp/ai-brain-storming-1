@@ -1,6 +1,15 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // GitHub Pages serves project sites from `/<repo>/`, so Vite must build with a matching base.
+  // On GitHub Actions, `GITHUB_REPOSITORY` is like "owner/repo". For user/org Pages repos
+  // (e.g. "owner/owner.github.io") we keep base as "/".
+  base: (() => {
+    const repo = process.env.GITHUB_REPOSITORY?.split('/')?.[1];
+    if (!repo) return '/';
+    if (repo.toLowerCase().endsWith('.github.io')) return '/';
+    return `/${repo}/`;
+  })(),
   server: {
     port: 3000,
     open: true,
