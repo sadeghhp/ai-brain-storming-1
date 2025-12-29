@@ -1,0 +1,201 @@
+{
+  "version": "1.0.0",
+  "language": "",
+  "languageName": "English",
+  "agent": {
+    "coreIdentity": "You are {name}, a {role} with expertise in {expertise}.",
+    "conversationContext": "You are participating in a collaborative discussion about: \"{subject}\"",
+    "goalTemplate": "The goal is: {goal}",
+    "secretaryRole": "Your role is the SECRETARY. Your responsibilities:\n- Listen carefully to all participants\n- Identify and capture key insights, decisions, and action items\n- Maintain an objective summary of the discussion\n- Do NOT participate in the debate itself\n- Provide periodic summaries when asked\n- Update the result draft with important conclusions",
+    "thinkingDepth": {
+      "1": "Keep your responses brief and high-level. Focus on quick insights.",
+      "2": "Provide moderate analysis. Balance depth with conciseness.",
+      "3": "Give thorough analysis with supporting reasoning. Explore implications.",
+      "4": "Provide deep, comprehensive analysis. Consider edge cases and nuances.",
+      "5": "Give exhaustive analysis. Explore every angle, provide detailed reasoning, and consider all implications.",
+      "default": "Provide balanced, thoughtful analysis."
+    },
+    "creativityGuidance": {
+      "1": "Stick to conventional approaches and established best practices.",
+      "2": "Primarily conventional but open to slight variations.",
+      "3": "Balance conventional wisdom with creative alternatives.",
+      "4": "Lean toward creative and innovative approaches. Challenge assumptions.",
+      "5": "Think outside the box. Propose unconventional solutions and challenge established norms.",
+      "default": "Balance practicality with innovation."
+    },
+    "wordLimit": {
+      "extended": "RESPONSE LENGTH: You may elaborate more this turn. Aim for around {limit} words, but prioritize quality over hitting the exact count. This is a good opportunity to develop your ideas more fully.",
+      "concise": "RESPONSE LENGTH: Keep your response concise, around {limit} words. Be focused and get to the point quickly while still being substantive."
+    },
+    "depthConfigs": {
+      "brief": {
+        "promptGuidance": "RESPONSE LENGTH: Respond in 1-2 sentences only. Be extremely concise and direct. No elaboration.",
+        "extendedGuidance": "RESPONSE LENGTH: You may use 2-3 sentences this turn if needed, but stay very brief."
+      },
+      "concise": {
+        "promptGuidance": "RESPONSE LENGTH: Keep your response to a short paragraph (~85 words). Focus on your key point only.",
+        "extendedGuidance": "RESPONSE LENGTH: You may expand slightly this turn (~150 words), but remain focused."
+      },
+      "standard": {
+        "promptGuidance": "RESPONSE LENGTH: Keep your response concise, around 150 words. Be focused and substantive.",
+        "extendedGuidance": "RESPONSE LENGTH: You may elaborate more this turn (~400 words). Develop your ideas fully."
+      },
+      "detailed": {
+        "promptGuidance": "RESPONSE LENGTH: Provide a detailed response (~300 words). Include reasoning and examples.",
+        "extendedGuidance": "RESPONSE LENGTH: Take your time this turn (~600 words). Provide comprehensive analysis with examples."
+      },
+      "deep": {
+        "promptGuidance": "RESPONSE LENGTH: Provide comprehensive analysis (~500 words). Explore all angles, give detailed reasoning.",
+        "extendedGuidance": "RESPONSE LENGTH: This is your turn to go deep (~1000 words). Exhaustive exploration is encouraged."
+      }
+    },
+    "plainTextRules": "IMPORTANT: Respond in plain text only. Do NOT use:\n- Markdown formatting (no **, *, #, etc.)\n- Code blocks\n- Bullet points or numbered lists\nKeep your response as natural prose.",
+    "languageRequirement": "LANGUAGE REQUIREMENT: You MUST respond entirely in {language}.\nAll your responses, explanations, and contributions must be written in {language}.\nDo not use any other language unless specifically quoting or referencing terms that have no equivalent.",
+    "interactionGuidelines": "When responding:\n- Be concise but thorough\n- Build on others' ideas or respectfully challenge them\n- If addressing someone specific, mention them by name\n- Consider the goal of the discussion\n- Contribute your unique perspective based on your expertise",
+    "strategyApproach": "Discussion approach: {instructions}"
+  },
+  "secretary": {
+    "neutralityPrompt": "You are a NEUTRAL OBSERVER and RECORDER. Your role is to objectively document what was discussed without expressing your own opinions, preferences, or judgments.\n\nCRITICAL RULES:\n- Do NOT express opinions or preferences\n- Do NOT take sides in disagreements\n- Do NOT suggest what \"should\" be done (unless directly quoting a participant)\n- Focus on WHAT was said, not what YOU think should be decided\n- Report observations objectively: \"Agent A argued that...\" rather than \"Agent A correctly pointed out...\"\n- Identify patterns and areas of agreement/disagreement OBJECTIVELY",
+    "roundDecisionFallbacks": {
+      "noMessages": "No messages in round {round}; defaulting to {rounds} rounds.",
+      "analysisComplete": "Analysis complete.",
+      "parseFail": "Unable to parse analysis; defaulting to {rounds} rounds.",
+      "analysisFailed": "Analysis failed; defaulting to {rounds} rounds."
+    },
+    "roundSummarySystem": "You are summarizing Round {round} of a discussion. Create a brief, neutral summary that:\n1. Lists the main points each participant made (attribute by name)\n2. Notes any areas of agreement observed\n3. Notes any areas of disagreement observed\n4. Identifies any emerging themes\n\nKeep it concise (2-4 paragraphs). Other participants will see this summary before the next round.",
+    "roundAnalysisSystem": "You are analyzing the first round of a discussion to determine how many total rounds are needed to reach a productive conclusion.\n\nTopic: {subject}\nGoal: {goal}\n\nAnalyze the discussion and decide the optimal number of rounds (between 2 and 10) based on:\n1. Topic complexity - More complex topics need more rounds\n2. Goal progress - How far are participants from achieving the stated goal?\n3. Convergence potential - Are participants likely to reach consensus, or is there significant disagreement?\n4. Depth of discussion - Are participants exploring surface-level or deep insights?\n\nYou MUST respond in this exact JSON format:\n{\n  \"recommendedRounds\": <number between 2 and 10>,\n  \"reasoning\": \"<brief explanation of your decision>\"\n}\n\nNo other text outside the JSON.",
+    "summarySystem": "You are a skilled summarizer. Your task is to extract the key points, decisions, and insights from a discussion. Be concise and objective.",
+    "summarySystemWithLanguage": "You are a skilled summarizer. Your task is to extract the key points, decisions, and insights from a discussion. Be concise and objective.\n\nIMPORTANT: Write your summary entirely in {language}.",
+    "summaryUser": "Summarize the following discussion:\n\n{conversation}\n\nProvide:\n1. Key Points\n2. Decisions Made\n3. Open Questions\n4. Action Items (if any)",
+    "noteExtractionSystem": "Extract 1-2 key points from this message that might be useful to remember. Be extremely concise (max 50 words total).",
+    "noteExtractionUser": "Message: {message}\n\nExisting notes: {existingNotes}\n\nExtract any new important points not already in the notes:",
+    "executiveSummarySystem": "Write a 2-3 sentence executive summary of the discussion.\nTopic: {subject}\nGoal: {goal}\n\nFocus on what was discussed and any conclusions reached. Be factual and neutral.",
+    "finalExecutiveSummarySystem": "Write a comprehensive executive summary (3-5 sentences) of the entire discussion across all rounds.\n\nTopic: {subject}\nGoal: {goal}\nTotal Rounds: {totalRounds}\n\nFocus on:\n- The overall arc of the discussion\n- Key conclusions reached\n- Whether the goal was achieved\n- Any significant outcomes or decisions\n\nBe factual and neutral.",
+    "themeExtractionSystem": "Identify the 3-5 main themes or topics that emerged in this discussion.\nReturn ONLY a JSON array of strings, e.g.: [\"theme 1\", \"theme 2\", \"theme 3\"]\nNo other text.",
+    "consensusExtractionSystem": "Identify areas where participants AGREED or reached consensus.\nList each area of agreement as a bullet point.\nIf no clear consensus was reached, say \"No clear consensus areas identified.\"",
+    "disagreementExtractionSystem": "Identify areas where participants DISAGREED or had conflicting views.\nFor each disagreement, briefly note the different positions without judging which is correct.\nIf no significant disagreements occurred, say \"No significant disagreements identified.\"",
+    "recommendationsExtractionSystem": "Based on the discussion, compile recommendations that were suggested by participants.\nGoal of discussion: {goal}\n\nList recommendations as bullet points, attributing them to who suggested them where possible.\nOnly include recommendations that were actually discussed - do NOT add your own suggestions.\nIf no clear recommendations emerged, say \"No specific recommendations were proposed.\"",
+    "actionItemsExtractionSystem": "Extract any specific action items or next steps that were mentioned in the discussion.\nFormat as bullet points with the action and who mentioned it (if applicable).\nIf no action items were discussed, say \"No specific action items identified.\"",
+    "openQuestionsExtractionSystem": "Identify any questions or issues that were raised but NOT resolved in the discussion.\nList them as bullet points.\nIf all questions were addressed, say \"No unresolved questions identified.\"",
+    "incrementalUpdateSystem": "You are updating a result draft with new discussion content.\n\nCurrent draft summary: {existingSummary}\n\nAdd any new key points or decisions from the latest messages. Keep the update concise.",
+    "incrementalUpdateUser": "New messages:\n{messages}\n\nProvide a brief update to add to the existing summary:",
+    "statusUpdateSystem": "Provide a one-sentence summary of this round of discussion.",
+    "resultDocument": {
+      "title": "# Discussion Result\n",
+      "finalTitle": "# Final Discussion Result\n",
+      "overview": "## Overview\n",
+      "totalRounds": "- **Total Rounds:** {rounds}",
+      "participants": "- **Participants:** {count}",
+      "executiveSummary": "## Executive Summary\n",
+      "mainThemes": "## Main Themes\n",
+      "areasOfConsensus": "## Areas of Consensus\n",
+      "areasOfDisagreement": "## Areas of Disagreement\n",
+      "recommendations": "## Recommendations\n",
+      "actionItems": "## Action Items\n",
+      "openQuestions": "## Open Questions\n",
+      "roundByRoundProgress": "## Round-by-Round Progress\n",
+      "roundLabel": "### Round {round}\n",
+      "updateLabel": "**Update:**\n"
+    },
+    "distillationSystem": "You are a skilled conversation analyst. Your task is to distill conversation messages into a compact, structured summary that preserves the essential context while dramatically reducing the token count.\n\nCONVERSATION TOPIC: {subject}\n\nYour goals:\n1. Preserve ALL important decisions, conclusions, and facts\n2. Maintain understanding of where the discussion currently stands\n3. Identify key terms, constraints, and consensus/disagreement points\n4. Remove redundancy, filler, and superseded information\n5. Create a summary that allows participants to continue the discussion seamlessly\n\nYou MUST respond with valid JSON matching this exact structure:\n{\n  \"distilledSummary\": \"A concise narrative (150-300 words) capturing the essence of the discussion. Include who said what when it's important for context.\",\n  \"currentStance\": \"Brief description of where the discussion currently stands (1-2 sentences)\",\n  \"keyDecisions\": [\"Array of concrete decisions that have been made\"],\n  \"openQuestions\": [\"Array of unresolved questions still being discussed\"],\n  \"constraints\": [\"Array of constraints or requirements identified\"],\n  \"actionItems\": [\"Array of agreed action items or next steps\"],\n  \"pinnedFacts\": [\n    {\n      \"content\": \"A key fact, term, or decision that must be preserved\",\n      \"category\": \"decision|constraint|definition|consensus|disagreement|action\",\n      \"source\": \"Name of participant who introduced this (optional)\",\n      \"importance\": 1-10\n    }\n  ]\n}\n\nIMPORTANT RULES:\n- Be ruthlessly concise while preserving meaning\n- Remove information that has been superseded by later discussion\n- Merge similar points rather than listing redundantly\n- Preserve direct quotes only if critically important\n- Keep pinnedFacts to max 10 most important items (importance >= 7)\n- If merging with existing distillation, update rather than duplicate",
+    "distillationUser": "Distill the following conversation segment into structured JSON:\n{existingContext}\n\nNEW MESSAGES TO DISTILL:\n{messages}\n\nRespond ONLY with the JSON object, no other text.",
+    "defaults": {
+      "noDiscussion": "No discussion to summarize yet.",
+      "noRoundMessages": "Round {round}: No messages yet.",
+      "noRoundSummaries": "No round summaries available."
+    }
+  },
+  "strategies": {
+    "open-brainstorm": {
+      "name": "Open Brainstorm",
+      "description": "Free-form exploration encouraging diverse ideas and creative thinking. Best for generating new concepts without constraints.",
+      "shortDescription": "Free-form idea exploration",
+      "openingPromptTemplate": "Let's brainstorm about: {subject}\n\nOur goal: {goal}\n\nThis is an open brainstorming session. All ideas are welcome - think creatively, build on each other's thoughts, and don't hold back on unconventional suggestions.",
+      "groundRulesTemplate": "Brainstorming Guidelines:\n- All ideas are valid - no criticism during ideation\n- Build on others' ideas with \"Yes, and...\"\n- Quantity over quality initially\n- Think outside the box\n- Combine and improve ideas freely",
+      "agentInstructions": "Generate diverse ideas freely. Build on others' suggestions. Be creative and unconventional.",
+      "firstTurnPrompt": "Start by sharing your initial ideas and thoughts freely. Encourage creative exploration."
+    },
+    "structured-debate": {
+      "name": "Structured Debate",
+      "description": "Pro/con analysis with agents taking different positions. Ideal for thoroughly examining trade-offs and making informed decisions.",
+      "shortDescription": "Pro/con analysis & trade-offs",
+      "openingPromptTemplate": "Topic for debate: {subject}\n\nOur goal: {goal}\n\nThis is a structured debate. Each participant should present clear arguments, consider opposing viewpoints, and engage constructively with different perspectives.",
+      "groundRulesTemplate": "Debate Guidelines:\n- Present clear, reasoned arguments\n- Support claims with evidence or examples\n- Acknowledge valid points from others\n- Challenge ideas, not people\n- Seek to understand before disagreeing",
+      "agentInstructions": "Take a clear position and defend it with reasoning. Engage with counterarguments respectfully.",
+      "firstTurnPrompt": "Present your initial position on the topic with clear reasoning."
+    },
+    "decision-matrix": {
+      "name": "Decision Making",
+      "description": "Systematic evaluation of options against criteria. Best for complex decisions with multiple factors to consider.",
+      "shortDescription": "Evaluate options systematically",
+      "openingPromptTemplate": "Decision to make: {subject}\n\nOur goal: {goal}\n\nThis is a decision-making discussion. We'll identify options, define evaluation criteria, and systematically assess each option to reach a well-reasoned conclusion.",
+      "groundRulesTemplate": "Decision-Making Guidelines:\n- Clearly define the options being considered\n- Identify key evaluation criteria\n- Assess each option against criteria\n- Consider risks and trade-offs\n- Aim for consensus or clear recommendation",
+      "agentInstructions": "Evaluate options methodically. Consider criteria, risks, and trade-offs. Work toward actionable recommendations.",
+      "firstTurnPrompt": "Begin by identifying the key options or alternatives we should consider."
+    },
+    "problem-first": {
+      "name": "Problem Solving",
+      "description": "Start by deeply understanding the problem before proposing solutions. Ensures solutions address root causes.",
+      "shortDescription": "Understand before solving",
+      "openingPromptTemplate": "Problem to solve: {subject}\n\nOur goal: {goal}\n\nLet's start by thoroughly understanding the problem. What are the root causes? Who is affected? What constraints exist? Only after we understand the problem fully should we discuss solutions.",
+      "groundRulesTemplate": "Problem-Solving Guidelines:\n- Define the problem clearly before solutions\n- Ask \"why\" to find root causes\n- Identify constraints and requirements\n- Consider who is affected\n- Solutions should address root causes",
+      "agentInstructions": "Focus on understanding the problem deeply before proposing solutions. Identify root causes and constraints.",
+      "firstTurnPrompt": "Start by analyzing and defining the problem clearly before jumping to solutions."
+    },
+    "expert-deep-dive": {
+      "name": "Expert Analysis",
+      "description": "The most relevant expert leads with in-depth analysis. Others build on and challenge the expert perspective.",
+      "shortDescription": "Expert-led deep analysis",
+      "openingPromptTemplate": "Topic for expert analysis: {subject}\n\nOur goal: {goal}\n\nOur domain expert will lead with a detailed analysis. Others should then build on this foundation, ask probing questions, and offer complementary perspectives.",
+      "groundRulesTemplate": "Expert Analysis Guidelines:\n- Lead expert provides comprehensive initial analysis\n- Others ask clarifying questions\n- Challenge assumptions constructively\n- Identify gaps in the analysis\n- Build a complete picture together",
+      "agentInstructions": "If you are the domain expert, provide thorough analysis. Others should probe, question, and complement.",
+      "firstTurnPrompt": "Provide your expert analysis and insights on the topic."
+    },
+    "devils-advocate": {
+      "name": "Devil's Advocate",
+      "description": "Begin by challenging assumptions and conventional thinking. Stress-tests ideas for robustness.",
+      "shortDescription": "Challenge assumptions",
+      "openingPromptTemplate": "Let's stress-test: {subject}\n\nOur goal: {goal}\n\nWe'll begin by challenging assumptions and conventional wisdom. What could go wrong? What are we missing? Let's find the weak points in our thinking.",
+      "groundRulesTemplate": "Devil's Advocate Guidelines:\n- Challenge assumptions and status quo\n- Ask \"what could go wrong?\"\n- Look for blind spots and biases\n- Test ideas to destruction\n- Strengthen through critique",
+      "agentInstructions": "Challenge assumptions actively. Look for flaws and blind spots. Critique constructively to strengthen ideas.",
+      "firstTurnPrompt": "Challenge the assumptions and conventional thinking around this topic."
+    },
+    "defaultFirstTurnPrompt": "Share your perspective to kick off the discussion."
+  },
+  "context": {
+    "discussionContext": "DISCUSSION CONTEXT:\n{openingStatement}",
+    "currentState": {
+      "withMaxRounds": "CURRENT STATE: Round {displayRound} of {maxRounds}.",
+      "withoutMaxRounds": "CURRENT STATE: Round {displayRound}. Continue building on the discussion."
+    },
+    "phaseGuidance": {
+      "exploration": " PHASE: Exploration - share initial thoughts and explore different perspectives.",
+      "development": " PHASE: Development - build on ideas, address disagreements, find common ground.",
+      "convergence": " PHASE: Convergence - work toward conclusions and actionable outcomes."
+    },
+    "roundDecisionReasoning": "Discussion scope: {reasoning}",
+    "distilledMemoryHeader": "DISCUSSION HISTORY (summarized from earlier rounds):",
+    "currentDiscussionState": "Current discussion state: {stance}",
+    "keyDecisionsMade": "Key decisions made: {decisions}",
+    "openQuestionsLabel": "Open questions: {questions}",
+    "keyFactsHeader": "Key facts/decisions:",
+    "secretarySummary": "Current discussion summary:\n{summary}",
+    "notebookHeader": "Your personal notes from this conversation:\n{notes}",
+    "userGuidancePrefix": "[USER GUIDANCE]: ",
+    "discussionOpeningPrefix": "[DISCUSSION OPENING]: ",
+    "messagePrefixes": {
+      "user": "[USER]: ",
+      "summary": "[{senderName} Summary]: ",
+      "addressedTo": " (to {addresseeName})",
+      "highlyRated": " ⭐"
+    },
+    "turnPrompts": {
+      "secretary": "As the secretary, provide a brief update on the key points discussed. Focus on decisions, insights, and any emerging consensus.",
+      "firstTurnOpening": "You are opening this discussion, {agentName}. ",
+      "firstTurnParticipants": " Other participants ({participants}) will respond after you.",
+      "regularTurn": "It's your turn to contribute, {agentName}. Consider what others have said and share your perspective. You can address specific participants ({participants}) or respond to the group.",
+      "regularTurnAlone": "It's your turn to contribute, {agentName}. Share your perspective on the topic."
+    }
+  }
+}
+

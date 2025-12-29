@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Context Builder
-// Version: 1.2.0
+// Version: 1.3.0
 // ============================================
 
 import type { Agent, Conversation, Message, UserInterjection, Notebook, DistilledMemory } from '../types';
@@ -9,6 +9,7 @@ import { buildSystemPrompt, calculateWordLimit, getDepthConfig } from '../llm/pr
 import { countTokens } from '../llm/token-counter';
 import { ContextStrategy } from './context-strategy';
 import { getStrategyById } from '../strategies/starting-strategies';
+import { languageService } from '../prompts/language-service';
 
 export interface ContextComponents {
   systemPrompt: string;
@@ -190,8 +191,9 @@ export class ContextBuilder {
     wordLimit: { limit: number; isExtended: boolean; baseLimit: number },
     thinkingDepth: number
   ): string {
+    const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
     const depthConfig = this.conversation.conversationDepth 
-      ? getDepthConfig(this.conversation.conversationDepth) 
+      ? getDepthConfig(this.conversation.conversationDepth, this.conversation.targetLanguage) 
       : null;
     
     // Adjust limit slightly based on thinking depth
@@ -206,10 +208,10 @@ export class ContextBuilder {
     
     // Fallback to generic instructions
     if (wordLimit.isExtended) {
-      return `\nRESPONSE LENGTH: You may elaborate more this turn. Aim for around ${adjustedLimit} words, but prioritize quality over hitting the exact count.`;
+      return `\n${languageService.interpolate(prompts.agent.wordLimit.extended, { limit: adjustedLimit })}`;
     }
     
-    return `\nRESPONSE LENGTH: Keep your response concise, around ${adjustedLimit} words. Be focused and get to the point quickly while still being substantive.`;
+    return `\n${languageService.interpolate(prompts.agent.wordLimit.concise, { limit: adjustedLimit })}`;
   }
 
   /**
@@ -227,6 +229,7 @@ export class ContextBuilder {
     currentRound: number = 0,
     distilledMemory: DistilledMemory | null = null
   ): LLMMessage[] {
+    const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
     const result: LLMMessage[] = [];
 
     // System prompt
@@ -236,7 +239,9 @@ export class ContextBuilder {
     if (isFirstTurn && this.conversation.openingStatement) {
       result.push({
         role: 'system',
-        content: `DISCUSSION CONTEXT:\n${this.conversation.openingStatement}`,
+        content: languageService.interpolate(prompts.context.discussionContext, {
+          openingStatement: this.conversation.openingStatement,
+        }),
       });
     }
 
@@ -248,24 +253,31 @@ export class ContextBuilder {
       let stateContent = '';
       
       if (effectiveMaxRounds) {
-        stateContent = `CURRENT STATE: Round ${displayRound} of ${effectiveMaxRounds}.`;
+        stateContent = languageService.interpolate(prompts.context.currentState.withMaxRounds, {
+          displayRound,
+          maxRounds: effectiveMaxRounds,
+        });
         
         // Add phase guidance based on conversation progress
         const progress = displayRound / effectiveMaxRounds;
         if (progress <= 0.33) {
-          stateContent += ' PHASE: Exploration - share initial thoughts and explore different perspectives.';
+          stateContent += prompts.context.phaseGuidance.exploration;
         } else if (progress <= 0.66) {
-          stateContent += ' PHASE: Development - build on ideas, address disagreements, find common ground.';
+          stateContent += prompts.context.phaseGuidance.development;
         } else {
-          stateContent += ' PHASE: Convergence - work toward conclusions and actionable outcomes.';
+          stateContent += prompts.context.phaseGuidance.convergence;
         }
       } else {
-        stateContent = `CURRENT STATE: Round ${displayRound}. Continue building on the discussion.`;
+        stateContent = languageService.interpolate(prompts.context.currentState.withoutMaxRounds, {
+          displayRound,
+        });
       }
       
       // Add round decision reasoning if available (helps agents understand why this many rounds)
       if (this.conversation.roundDecisionReasoning && displayRound === 2) {
-        stateContent += `\nDiscussion scope: ${this.conversation.roundDecisionReasoning}`;
+        stateContent += `\n${languageService.interpolate(prompts.context.roundDecisionReasoning, {
+          reasoning: this.conversation.roundDecisionReasoning,
+        })}`;
       }
       
       result.push({
@@ -287,7 +299,7 @@ export class ContextBuilder {
     if (secretarySummary) {
       result.push({
         role: 'system',
-        content: `Current discussion summary:\n${secretarySummary}`,
+        content: languageService.interpolate(prompts.context.secretarySummary, { summary: secretarySummary }),
       });
     }
 
@@ -295,7 +307,7 @@ export class ContextBuilder {
     if (notebook) {
       result.push({
         role: 'system',
-        content: `Your personal notes from this conversation:\n${notebook}`,
+        content: languageService.interpolate(prompts.context.notebookHeader, { notes: notebook }),
       });
     }
 
@@ -303,7 +315,7 @@ export class ContextBuilder {
     for (const interjection of interjections) {
       result.push({
         role: 'user',
-        content: `[USER GUIDANCE]: ${interjection.content}`,
+        content: `${prompts.context.userGuidancePrefix}${interjection.content}`,
       });
     }
 
@@ -322,9 +334,10 @@ export class ContextBuilder {
    * Format distilled memory into a context block
    */
   private formatDistilledMemory(memory: DistilledMemory): string {
+    const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
     const parts: string[] = [];
     
-    parts.push('DISCUSSION HISTORY (summarized from earlier rounds):');
+    parts.push(prompts.context.distilledMemoryHeader);
     
     // Main distilled summary
     if (memory.distilledSummary) {
@@ -333,17 +346,17 @@ export class ContextBuilder {
     
     // Current stance
     if (memory.currentStance) {
-      parts.push(`\nCurrent discussion state: ${memory.currentStance}`);
+      parts.push(`\n${languageService.interpolate(prompts.context.currentDiscussionState, { stance: memory.currentStance })}`);
     }
     
     // Key decisions (if any)
     if (memory.keyDecisions && memory.keyDecisions.length > 0) {
-      parts.push(`\nKey decisions made: ${memory.keyDecisions.join('; ')}`);
+      parts.push(`\n${languageService.interpolate(prompts.context.keyDecisionsMade, { decisions: memory.keyDecisions.join('; ') })}`);
     }
     
     // Open questions (if any)
     if (memory.openQuestions && memory.openQuestions.length > 0) {
-      parts.push(`\nOpen questions: ${memory.openQuestions.join('; ')}`);
+      parts.push(`\n${languageService.interpolate(prompts.context.openQuestionsLabel, { questions: memory.openQuestions.join('; ') })}`);
     }
     
     // Pinned facts (important anchors - show top importance facts)
@@ -357,7 +370,7 @@ export class ContextBuilder {
         const source = f.source ? ` (${f.source})` : '';
         return `- [${f.category}]${source}: ${f.content}`;
       }).join('\n');
-      parts.push(`\nKey facts/decisions:\n${factsList}`);
+      parts.push(`\n${prompts.context.keyFactsHeader}\n${factsList}`);
     }
     
     return parts.join('\n');
@@ -371,13 +384,14 @@ export class ContextBuilder {
     currentAgent: Agent,
     allAgents: Agent[]
   ): LLMMessage {
+    const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
     const sender = allAgents.find(a => a.id === message.agentId);
 
     // Opening messages (system-generated from strategy)
     if (message.type === 'opening') {
       return {
         role: 'system',
-        content: `[DISCUSSION OPENING]: ${message.content}`,
+        content: `${prompts.context.discussionOpeningPrefix}${message.content}`,
       };
     }
 
@@ -388,7 +402,7 @@ export class ContextBuilder {
 
     // User interjections
     if (message.type === 'interjection') {
-      return { role: 'user', content: `[USER]: ${message.content}` };
+      return { role: 'user', content: `${prompts.context.messagePrefixes.user}${message.content}` };
     }
 
     // System messages
@@ -401,7 +415,7 @@ export class ContextBuilder {
       const senderName = sender?.name || 'Secretary';
       return { 
         role: 'system', 
-        content: `[${senderName} Summary]: ${message.content}` 
+        content: languageService.interpolate(prompts.context.messagePrefixes.summary, { senderName }) + message.content,
       };
     }
 
@@ -412,12 +426,14 @@ export class ContextBuilder {
     // Add addressing info
     if (message.addressedTo) {
       const addressee = allAgents.find(a => a.id === message.addressedTo);
-      prefix += ` (to ${addressee?.name || 'someone'})`;
+      prefix += languageService.interpolate(prompts.context.messagePrefixes.addressedTo, {
+        addresseeName: addressee?.name || 'someone',
+      });
     }
 
     // Add weight indicator if significant
     if (message.weight >= 3) {
-      prefix += ' ⭐'; // Highly rated message
+      prefix += prompts.context.messagePrefixes.highlyRated;
     }
 
     return {
@@ -430,6 +446,7 @@ export class ContextBuilder {
    * Build the final prompt asking for the agent's response
    */
   private buildFinalPrompt(agent: Agent, allAgents: Agent[], isFirstTurn: boolean = false): LLMMessage {
+    const prompts = languageService.getPromptsSync(this.conversation.targetLanguage || '');
     const otherAgents = allAgents
       .filter(a => a.id !== agent.id && !a.isSecretary)
       .map(a => a.name);
@@ -437,46 +454,35 @@ export class ContextBuilder {
     if (agent.isSecretary) {
       return {
         role: 'user',
-        content: `As the secretary, provide a brief update on the key points discussed. Focus on decisions, insights, and any emerging consensus.`,
+        content: prompts.context.turnPrompts.secretary,
       };
     }
 
     // Special prompt for first speaker with strategy-specific instructions
     if (isFirstTurn) {
-      let firstTurnPrompt = `You are opening this discussion, ${agent.name}. `;
+      let firstTurnPrompt = languageService.interpolate(prompts.context.turnPrompts.firstTurnOpening, {
+        agentName: agent.name,
+      });
       
       if (this.conversation.startingStrategy) {
-        const strategy = getStrategyById(this.conversation.startingStrategy);
-        if (strategy) {
-          switch (strategy.id) {
-            case 'open-brainstorm':
-              firstTurnPrompt += 'Start by sharing your initial ideas and thoughts freely. Encourage creative exploration.';
-              break;
-            case 'structured-debate':
-              firstTurnPrompt += 'Present your initial position on the topic with clear reasoning.';
-              break;
-            case 'decision-matrix':
-              firstTurnPrompt += 'Begin by identifying the key options or alternatives we should consider.';
-              break;
-            case 'problem-first':
-              firstTurnPrompt += 'Start by analyzing and defining the problem clearly before jumping to solutions.';
-              break;
-            case 'expert-deep-dive':
-              firstTurnPrompt += 'Provide your expert analysis and insights on the topic.';
-              break;
-            case 'devils-advocate':
-              firstTurnPrompt += 'Challenge the assumptions and conventional thinking around this topic.';
-              break;
-            default:
-              firstTurnPrompt += 'Share your perspective to kick off the discussion.';
-          }
+        const strategy = getStrategyById(this.conversation.startingStrategy, this.conversation.targetLanguage);
+        if (strategy && strategy.id in prompts.strategies) {
+          // Get the first turn prompt from the strategy prompts
+          // Strategy IDs are valid keys in strategies (excluding defaultFirstTurnPrompt)
+          type StrategyKey = 'open-brainstorm' | 'structured-debate' | 'decision-matrix' | 'problem-first' | 'expert-deep-dive' | 'devils-advocate';
+          const strategyPrompts = prompts.strategies[strategy.id as StrategyKey];
+          firstTurnPrompt += strategyPrompts.firstTurnPrompt;
+        } else {
+          firstTurnPrompt += prompts.strategies.defaultFirstTurnPrompt;
         }
       } else {
-        firstTurnPrompt += 'Share your perspective to kick off the discussion.';
+        firstTurnPrompt += prompts.strategies.defaultFirstTurnPrompt;
       }
       
       if (otherAgents.length > 0) {
-        firstTurnPrompt += ` Other participants (${otherAgents.join(', ')}) will respond after you.`;
+        firstTurnPrompt += languageService.interpolate(prompts.context.turnPrompts.firstTurnParticipants, {
+          participants: otherAgents.join(', '),
+        });
       }
       
       return { role: 'user', content: firstTurnPrompt };
@@ -484,8 +490,13 @@ export class ContextBuilder {
 
     // Regular turn prompt
     const prompt = otherAgents.length > 0
-      ? `It's your turn to contribute, ${agent.name}. Consider what others have said and share your perspective. You can address specific participants (${otherAgents.join(', ')}) or respond to the group.`
-      : `It's your turn to contribute, ${agent.name}. Share your perspective on the topic.`;
+      ? languageService.interpolate(prompts.context.turnPrompts.regularTurn, {
+          agentName: agent.name,
+          participants: otherAgents.join(', '),
+        })
+      : languageService.interpolate(prompts.context.turnPrompts.regularTurnAlone, {
+          agentName: agent.name,
+        });
 
     return { role: 'user', content: prompt };
   }
@@ -517,4 +528,3 @@ export class ContextBuilder {
     return this.strategy.getMessagesForSummarization(messages);
   }
 }
-

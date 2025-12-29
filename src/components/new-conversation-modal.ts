@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.10.0
+// Version: 2.11.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
@@ -12,6 +12,7 @@ import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { startingStrategies, getStrategyById, buildOpeningStatement, buildGroundRules } from '../strategies/starting-strategies';
 import { conversationTemplates, templateCategories, getTemplateById } from '../strategies/conversation-templates';
 import { getEnabledLanguages, type Language } from '../utils/languages';
+import { languageService, type TranslationProgress } from '../prompts/language-service';
 import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId, ConversationDepth, AppSettings } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
@@ -71,6 +72,10 @@ export class NewConversationModal extends HTMLElement {
   // Enabled languages from settings
   private enabledLanguages: Language[] = getEnabledLanguages(['']);
   private settingsUnsubscribe: (() => void) | null = null;
+  // Language translation state
+  private showTranslationModal: boolean = false;
+  private translationProgress: TranslationProgress | null = null;
+  private pendingLanguageSelection: { code: string; name: string } | null = null;
   // Hidden categories/presets from settings
   private hiddenCategories: Set<string> = new Set();
   private hiddenPresets: Set<string> = new Set();
@@ -1201,6 +1206,132 @@ export class NewConversationModal extends HTMLElement {
             display: none;
           }
         }
+
+        /* Translation Modal Styles */
+        .translation-modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.8);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          z-index: calc(var(--z-modal, 400) + 10);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-4);
+        }
+
+        .translation-modal {
+          background: var(--color-bg-primary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg);
+          padding: var(--space-6);
+          width: 400px;
+          max-width: 90vw;
+          box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.5);
+        }
+
+        .translation-modal h3 {
+          margin: 0 0 var(--space-4) 0;
+          color: var(--color-text-primary);
+          font-size: var(--text-lg);
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        .translation-modal p {
+          margin: 0 0 var(--space-4) 0;
+          color: var(--color-text-secondary);
+          font-size: var(--text-sm);
+          line-height: 1.5;
+        }
+
+        .translation-progress {
+          margin: var(--space-4) 0;
+        }
+
+        .progress-bar {
+          height: 8px;
+          background: var(--color-surface);
+          border-radius: var(--radius-full);
+          overflow: hidden;
+        }
+
+        .progress-fill {
+          height: 100%;
+          background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+          border-radius: var(--radius-full);
+          transition: width 0.3s ease;
+        }
+
+        .progress-text {
+          margin-top: var(--space-2);
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          text-align: center;
+        }
+
+        .translation-modal-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: var(--space-2);
+          margin-top: var(--space-4);
+        }
+
+        .translation-btn {
+          padding: var(--space-2) var(--space-4);
+          border-radius: var(--radius-md);
+          font-weight: var(--font-medium);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          font-size: var(--text-sm);
+        }
+
+        .translation-btn.cancel {
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          color: var(--color-text-secondary);
+        }
+
+        .translation-btn.cancel:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .translation-btn.primary {
+          background: var(--color-primary);
+          border: none;
+          color: white;
+        }
+
+        .translation-btn.primary:hover {
+          opacity: 0.9;
+        }
+
+        .translation-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .translation-error {
+          margin-top: var(--space-3);
+          padding: var(--space-3);
+          background: rgba(239, 68, 68, 0.1);
+          border: 1px solid rgba(239, 68, 68, 0.3);
+          border-radius: var(--radius-md);
+          color: var(--color-error);
+          font-size: var(--text-sm);
+        }
+
+        .translation-info {
+          margin-top: var(--space-3);
+          padding: var(--space-3);
+          background: var(--color-primary-dim);
+          border: 1px solid var(--color-primary);
+          border-radius: var(--radius-md);
+          font-size: var(--text-xs);
+          color: var(--color-text-secondary);
+        }
       </style>
 
       <div class="modal-overlay">
@@ -1629,10 +1760,35 @@ export class NewConversationModal extends HTMLElement {
       });
     });
 
-    // Language selector
+    // Language selector with availability check
     const languageSelect = this.shadowRoot?.getElementById('target-language') as HTMLSelectElement | null;
-    languageSelect?.addEventListener('change', () => {
-      this.selectedLanguage = languageSelect.value;
+    languageSelect?.addEventListener('change', async () => {
+      const selectedCode = languageSelect.value;
+      
+      // English (empty code) is always available
+      if (!selectedCode) {
+        this.selectedLanguage = selectedCode;
+        return;
+      }
+      
+      // Check if language prompts are available
+      const isAvailable = await languageService.isLanguageAvailable(selectedCode);
+      
+      if (isAvailable) {
+        this.selectedLanguage = selectedCode;
+        // Preload the language prompts for faster access later
+        await languageService.preloadLanguage(selectedCode);
+      } else {
+        // Show translation confirmation modal
+        const selectedLang = this.enabledLanguages.find(l => l.code === selectedCode);
+        if (selectedLang) {
+          this.pendingLanguageSelection = { code: selectedCode, name: selectedLang.name };
+          this.showTranslationModal = true;
+          // Reset the select to previous value until user confirms
+          languageSelect.value = this.selectedLanguage;
+          this.renderTranslationModal();
+        }
+      }
     });
 
     // Strategy selector
@@ -2160,6 +2316,194 @@ export class NewConversationModal extends HTMLElement {
       eventBus.emit('conversation:selected', engine.getConversation().id);
     } catch (error) {
       console.error('[NewConversationModal] Failed to create conversation:', error);
+    }
+  }
+
+  /**
+   * Render the translation confirmation/progress modal
+   */
+  private renderTranslationModal(): void {
+    // Remove existing modal if any
+    const existingModal = this.shadowRoot?.querySelector('.translation-modal-overlay');
+    if (existingModal) {
+      existingModal.remove();
+    }
+
+    if (!this.showTranslationModal || !this.pendingLanguageSelection) return;
+
+    const { name } = this.pendingLanguageSelection;
+    const isTranslating = this.translationProgress?.status === 'translating';
+    const hasFailed = this.translationProgress?.status === 'failed';
+    const hasCompleted = this.translationProgress?.status === 'completed';
+
+    const modalHtml = `
+      <div class="translation-modal-overlay">
+        <div class="translation-modal">
+          <h3>
+            🌐 Language Translation Required
+          </h3>
+          
+          ${hasCompleted ? `
+            <p style="color: var(--color-success);">
+              ✓ ${name} prompts have been translated successfully!
+            </p>
+          ` : isTranslating ? `
+            <p>
+              Translating prompts to ${name}...
+            </p>
+            <div class="translation-progress">
+              <div class="progress-bar">
+                <div class="progress-fill" style="width: ${this.translationProgress?.progress || 0}%"></div>
+              </div>
+              <div class="progress-text">${this.translationProgress?.currentSection || 'Initializing...'}</div>
+            </div>
+          ` : `
+            <p>
+              Prompts for <strong>${name}</strong> are not yet available. 
+              Would you like to translate them now using your default LLM?
+            </p>
+            <div class="translation-info">
+              ℹ️ This will use your configured LLM to translate all system prompts 
+              to ${name}. The translation will be saved locally for future use.
+            </div>
+          `}
+
+          ${hasFailed ? `
+            <div class="translation-error">
+              Translation failed: ${this.translationProgress?.error || 'Unknown error'}
+            </div>
+          ` : ''}
+
+          <div class="translation-modal-actions">
+            ${hasCompleted ? `
+              <button type="button" class="translation-btn primary" id="translation-done">
+                Done
+              </button>
+            ` : isTranslating ? `
+              <button type="button" class="translation-btn cancel" disabled>
+                Translating...
+              </button>
+            ` : `
+              <button type="button" class="translation-btn cancel" id="translation-cancel">
+                Cancel
+              </button>
+              <button type="button" class="translation-btn primary" id="translation-confirm">
+                Translate Now
+              </button>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Append to shadow root
+    const template = document.createElement('template');
+    template.innerHTML = modalHtml;
+    this.shadowRoot?.appendChild(template.content.cloneNode(true));
+
+    // Bind events
+    this.bindTranslationModalEvents();
+  }
+
+  /**
+   * Bind events for translation modal buttons
+   */
+  private bindTranslationModalEvents(): void {
+    const cancelBtn = this.shadowRoot?.getElementById('translation-cancel');
+    const confirmBtn = this.shadowRoot?.getElementById('translation-confirm');
+    const doneBtn = this.shadowRoot?.getElementById('translation-done');
+    const overlay = this.shadowRoot?.querySelector('.translation-modal-overlay');
+
+    cancelBtn?.addEventListener('click', () => {
+      this.closeTranslationModal();
+    });
+
+    confirmBtn?.addEventListener('click', () => {
+      this.startTranslation();
+    });
+
+    doneBtn?.addEventListener('click', () => {
+      this.closeTranslationModal();
+    });
+
+    // Close on overlay click (only if not translating)
+    overlay?.addEventListener('click', (e) => {
+      if (e.target === overlay && this.translationProgress?.status !== 'translating') {
+        this.closeTranslationModal();
+      }
+    });
+  }
+
+  /**
+   * Close translation modal and reset state
+   */
+  private closeTranslationModal(): void {
+    const wasCompleted = this.translationProgress?.status === 'completed';
+    
+    this.showTranslationModal = false;
+    
+    // If translation completed, apply the language selection
+    if (wasCompleted && this.pendingLanguageSelection) {
+      this.selectedLanguage = this.pendingLanguageSelection.code;
+      const languageSelect = this.shadowRoot?.getElementById('target-language') as HTMLSelectElement | null;
+      if (languageSelect) {
+        languageSelect.value = this.selectedLanguage;
+      }
+    }
+    
+    this.translationProgress = null;
+    this.pendingLanguageSelection = null;
+    
+    // Remove modal from DOM
+    const modal = this.shadowRoot?.querySelector('.translation-modal-overlay');
+    modal?.remove();
+  }
+
+  /**
+   * Start the translation process
+   */
+  private async startTranslation(): Promise<void> {
+    if (!this.pendingLanguageSelection) return;
+
+    const { code, name } = this.pendingLanguageSelection;
+
+    try {
+      // Set initial progress
+      this.translationProgress = {
+        languageCode: code,
+        languageName: name,
+        progress: 0,
+        currentSection: 'Starting translation...',
+        status: 'translating',
+      };
+      this.renderTranslationModal();
+
+      // Start translation with progress callback
+      await languageService.translateLanguage(code, name, (progress: TranslationProgress) => {
+        this.translationProgress = progress;
+        this.renderTranslationModal();
+      });
+
+      // Translation complete
+      this.translationProgress = {
+        languageCode: code,
+        languageName: name,
+        progress: 100,
+        currentSection: 'Complete',
+        status: 'completed',
+      };
+      this.renderTranslationModal();
+    } catch (error) {
+      console.error('[NewConversationModal] Translation failed:', error);
+      this.translationProgress = {
+        languageCode: code,
+        languageName: name,
+        progress: 0,
+        currentSection: '',
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+      this.renderTranslationModal();
     }
   }
 }

@@ -1,9 +1,10 @@
 // ============================================
 // AI Brainstorm - Starting Strategies
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import type { StartingStrategyId } from '../types';
+import { languageService } from '../prompts/language-service';
 
 /**
  * First speaker selection method
@@ -30,143 +31,81 @@ export interface StartingStrategy {
 }
 
 /**
- * Built-in starting strategies
+ * Strategy configuration (non-translatable parts)
  */
-export const startingStrategies: StartingStrategy[] = [
-  {
-    id: 'open-brainstorm',
-    name: 'Open Brainstorm',
-    icon: '💡',
-    description: 'Free-form exploration encouraging diverse ideas and creative thinking. Best for generating new concepts without constraints.',
-    shortDescription: 'Free-form idea exploration',
-    openingPromptTemplate: `Let's brainstorm about: {subject}
+interface StrategyConfig {
+  id: StartingStrategyId;
+  icon: string;
+  firstSpeakerMethod: FirstSpeakerMethod;
+}
 
-Our goal: {goal}
-
-This is an open brainstorming session. All ideas are welcome - think creatively, build on each other's thoughts, and don't hold back on unconventional suggestions.`,
-    groundRulesTemplate: `Brainstorming Guidelines:
-- All ideas are valid - no criticism during ideation
-- Build on others' ideas with "Yes, and..."
-- Quantity over quality initially
-- Think outside the box
-- Combine and improve ideas freely`,
-    firstSpeakerMethod: 'random',
-    agentInstructions: 'Generate diverse ideas freely. Build on others\' suggestions. Be creative and unconventional.',
-  },
-  {
-    id: 'structured-debate',
-    name: 'Structured Debate',
-    icon: '⚖️',
-    description: 'Pro/con analysis with agents taking different positions. Ideal for thoroughly examining trade-offs and making informed decisions.',
-    shortDescription: 'Pro/con analysis & trade-offs',
-    openingPromptTemplate: `Topic for debate: {subject}
-
-Our goal: {goal}
-
-This is a structured debate. Each participant should present clear arguments, consider opposing viewpoints, and engage constructively with different perspectives.`,
-    groundRulesTemplate: `Debate Guidelines:
-- Present clear, reasoned arguments
-- Support claims with evidence or examples
-- Acknowledge valid points from others
-- Challenge ideas, not people
-- Seek to understand before disagreeing`,
-    firstSpeakerMethod: 'first-in-order',
-    agentInstructions: 'Take a clear position and defend it with reasoning. Engage with counterarguments respectfully.',
-  },
-  {
-    id: 'decision-matrix',
-    name: 'Decision Making',
-    icon: '🎯',
-    description: 'Systematic evaluation of options against criteria. Best for complex decisions with multiple factors to consider.',
-    shortDescription: 'Evaluate options systematically',
-    openingPromptTemplate: `Decision to make: {subject}
-
-Our goal: {goal}
-
-This is a decision-making discussion. We'll identify options, define evaluation criteria, and systematically assess each option to reach a well-reasoned conclusion.`,
-    groundRulesTemplate: `Decision-Making Guidelines:
-- Clearly define the options being considered
-- Identify key evaluation criteria
-- Assess each option against criteria
-- Consider risks and trade-offs
-- Aim for consensus or clear recommendation`,
-    firstSpeakerMethod: 'most-relevant',
-    agentInstructions: 'Evaluate options methodically. Consider criteria, risks, and trade-offs. Work toward actionable recommendations.',
-  },
-  {
-    id: 'problem-first',
-    name: 'Problem Solving',
-    icon: '🔍',
-    description: 'Start by deeply understanding the problem before proposing solutions. Ensures solutions address root causes.',
-    shortDescription: 'Understand before solving',
-    openingPromptTemplate: `Problem to solve: {subject}
-
-Our goal: {goal}
-
-Let's start by thoroughly understanding the problem. What are the root causes? Who is affected? What constraints exist? Only after we understand the problem fully should we discuss solutions.`,
-    groundRulesTemplate: `Problem-Solving Guidelines:
-- Define the problem clearly before solutions
-- Ask "why" to find root causes
-- Identify constraints and requirements
-- Consider who is affected
-- Solutions should address root causes`,
-    firstSpeakerMethod: 'first-in-order',
-    agentInstructions: 'Focus on understanding the problem deeply before proposing solutions. Identify root causes and constraints.',
-  },
-  {
-    id: 'expert-deep-dive',
-    name: 'Expert Analysis',
-    icon: '🎓',
-    description: 'The most relevant expert leads with in-depth analysis. Others build on and challenge the expert perspective.',
-    shortDescription: 'Expert-led deep analysis',
-    openingPromptTemplate: `Topic for expert analysis: {subject}
-
-Our goal: {goal}
-
-Our domain expert will lead with a detailed analysis. Others should then build on this foundation, ask probing questions, and offer complementary perspectives.`,
-    groundRulesTemplate: `Expert Analysis Guidelines:
-- Lead expert provides comprehensive initial analysis
-- Others ask clarifying questions
-- Challenge assumptions constructively
-- Identify gaps in the analysis
-- Build a complete picture together`,
-    firstSpeakerMethod: 'most-relevant',
-    agentInstructions: 'If you are the domain expert, provide thorough analysis. Others should probe, question, and complement.',
-  },
-  {
-    id: 'devils-advocate',
-    name: 'Devil\'s Advocate',
-    icon: '😈',
-    description: 'Begin by challenging assumptions and conventional thinking. Stress-tests ideas for robustness.',
-    shortDescription: 'Challenge assumptions',
-    openingPromptTemplate: `Let's stress-test: {subject}
-
-Our goal: {goal}
-
-We'll begin by challenging assumptions and conventional wisdom. What could go wrong? What are we missing? Let's find the weak points in our thinking.`,
-    groundRulesTemplate: `Devil's Advocate Guidelines:
-- Challenge assumptions and status quo
-- Ask "what could go wrong?"
-- Look for blind spots and biases
-- Test ideas to destruction
-- Strengthen through critique`,
-    firstSpeakerMethod: 'random',
-    agentInstructions: 'Challenge assumptions actively. Look for flaws and blind spots. Critique constructively to strengthen ideas.',
-  },
+/**
+ * Strategy configurations (icons and speaker methods - not translated)
+ */
+const strategyConfigs: StrategyConfig[] = [
+  { id: 'open-brainstorm', icon: '💡', firstSpeakerMethod: 'random' },
+  { id: 'structured-debate', icon: '⚖️', firstSpeakerMethod: 'first-in-order' },
+  { id: 'decision-matrix', icon: '🎯', firstSpeakerMethod: 'most-relevant' },
+  { id: 'problem-first', icon: '🔍', firstSpeakerMethod: 'first-in-order' },
+  { id: 'expert-deep-dive', icon: '🎓', firstSpeakerMethod: 'most-relevant' },
+  { id: 'devils-advocate', icon: '😈', firstSpeakerMethod: 'random' },
 ];
+
+/**
+ * Get all strategies with translations for the specified language
+ */
+export function getStrategies(targetLanguage?: string): StartingStrategy[] {
+  const prompts = languageService.getPromptsSync(targetLanguage || '');
+  
+  return strategyConfigs.map(config => {
+    const strategyPrompts = prompts.strategies[config.id as keyof typeof prompts.strategies];
+    
+    if (!strategyPrompts || typeof strategyPrompts === 'string') {
+      // Fallback for defaultFirstTurnPrompt which is a string
+      return null;
+    }
+    
+    return {
+      id: config.id,
+      icon: config.icon,
+      firstSpeakerMethod: config.firstSpeakerMethod,
+      name: strategyPrompts.name,
+      description: strategyPrompts.description,
+      shortDescription: strategyPrompts.shortDescription,
+      openingPromptTemplate: strategyPrompts.openingPromptTemplate,
+      groundRulesTemplate: strategyPrompts.groundRulesTemplate,
+      agentInstructions: strategyPrompts.agentInstructions,
+    };
+  }).filter((s): s is StartingStrategy => s !== null);
+}
+
+/**
+ * Get built-in starting strategies (English - for backward compatibility)
+ * @deprecated Use getStrategies(targetLanguage) instead
+ */
+export const startingStrategies: StartingStrategy[] = getStrategies('');
 
 /**
  * Get a strategy by ID
  */
-export function getStrategyById(id: StartingStrategyId): StartingStrategy | undefined {
-  return startingStrategies.find(s => s.id === id);
+export function getStrategyById(id: StartingStrategyId, targetLanguage?: string): StartingStrategy | undefined {
+  const strategies = getStrategies(targetLanguage);
+  return strategies.find(s => s.id === id);
+}
+
+/**
+ * Get a strategy config by ID (for icon and speaker method only)
+ */
+export function getStrategyConfig(id: StartingStrategyId): StrategyConfig | undefined {
+  return strategyConfigs.find(s => s.id === id);
 }
 
 /**
  * Get default strategy
  */
-export function getDefaultStrategy(): StartingStrategy {
-  return startingStrategies[0]; // Open Brainstorm
+export function getDefaultStrategy(targetLanguage?: string): StartingStrategy {
+  const strategies = getStrategies(targetLanguage);
+  return strategies[0]; // Open Brainstorm
 }
 
 /**
@@ -176,15 +115,21 @@ export function buildOpeningStatement(
   strategy: StartingStrategy,
   subject: string,
   goal: string,
-  customOpening?: string
+  customOpening?: string,
+  targetLanguage?: string
 ): string {
   if (customOpening) {
     return customOpening;
   }
 
-  return strategy.openingPromptTemplate
-    .replace('{subject}', subject)
-    .replace('{goal}', goal);
+  // Get the strategy in the correct language
+  const localizedStrategy = targetLanguage 
+    ? getStrategyById(strategy.id, targetLanguage) 
+    : strategy;
+  
+  const template = localizedStrategy?.openingPromptTemplate || strategy.openingPromptTemplate;
+  
+  return languageService.interpolate(template, { subject, goal });
 }
 
 /**
@@ -192,12 +137,19 @@ export function buildOpeningStatement(
  */
 export function buildGroundRules(
   strategy: StartingStrategy,
-  customRules?: string
+  customRules?: string,
+  targetLanguage?: string
 ): string {
   if (customRules) {
     return customRules;
   }
-  return strategy.groundRulesTemplate;
+  
+  // Get the strategy in the correct language
+  const localizedStrategy = targetLanguage 
+    ? getStrategyById(strategy.id, targetLanguage) 
+    : strategy;
+  
+  return localizedStrategy?.groundRulesTemplate || strategy.groundRulesTemplate;
 }
 
 /**
@@ -273,8 +225,7 @@ function findMostRelevantAgent(
 /**
  * Get strategy-specific agent instructions
  */
-export function getAgentInstructions(strategyId: StartingStrategyId): string {
-  const strategy = getStrategyById(strategyId);
+export function getAgentInstructions(strategyId: StartingStrategyId, targetLanguage?: string): string {
+  const strategy = getStrategyById(strategyId, targetLanguage);
   return strategy?.agentInstructions || '';
 }
-

@@ -1,17 +1,28 @@
 // ============================================
 // AI Brainstorm - Prompt Builder
-// Version: 1.5.1
+// Version: 1.6.0
 // ============================================
 
 import type { LLMMessage } from './types';
 import type { Agent, Message, Conversation, UserInterjection, Notebook, ConversationDepth } from '../types';
 import { countTokens, truncateMessagesToFit } from './token-counter';
 import { getStrategyById, getAgentInstructions } from '../strategies/starting-strategies';
+import { languageService } from '../prompts/language-service';
+import type { PromptTemplates } from '../prompts/types';
 
 // Word limit defaults
 const DEFAULT_WORD_LIMIT = 150;
 const DEFAULT_EXTENDED_CHANCE = 20; // 20% chance
 const DEFAULT_EXTENDED_MULTIPLIER = 3;
+
+// Depth configuration numeric defaults (prompts come from language service)
+const DEPTH_NUMERIC_CONFIGS: Record<ConversationDepth, { wordLimit: number; extendedMultiplier: number; extendedChance: number }> = {
+  brief: { wordLimit: 40, extendedMultiplier: 2, extendedChance: 10 },
+  concise: { wordLimit: 85, extendedMultiplier: 2, extendedChance: 15 },
+  standard: { wordLimit: 150, extendedMultiplier: 3, extendedChance: 20 },
+  detailed: { wordLimit: 300, extendedMultiplier: 2, extendedChance: 25 },
+  deep: { wordLimit: 500, extendedMultiplier: 2, extendedChance: 30 },
+};
 
 // ----- Conversation Depth Configuration -----
 
@@ -27,52 +38,20 @@ export interface DepthConfig {
 }
 
 /**
- * Depth configuration presets
- */
-const DEPTH_CONFIGS: Record<ConversationDepth, DepthConfig> = {
-  brief: {
-    wordLimit: 40,
-    extendedMultiplier: 2,
-    extendedChance: 10,
-    promptGuidance: 'RESPONSE LENGTH: Respond in 1-2 sentences only. Be extremely concise and direct. No elaboration.',
-    extendedGuidance: 'RESPONSE LENGTH: You may use 2-3 sentences this turn if needed, but stay very brief.',
-  },
-  concise: {
-    wordLimit: 85,
-    extendedMultiplier: 2,
-    extendedChance: 15,
-    promptGuidance: 'RESPONSE LENGTH: Keep your response to a short paragraph (~85 words). Focus on your key point only.',
-    extendedGuidance: 'RESPONSE LENGTH: You may expand slightly this turn (~150 words), but remain focused.',
-  },
-  standard: {
-    wordLimit: 150,
-    extendedMultiplier: 3,
-    extendedChance: 20,
-    promptGuidance: 'RESPONSE LENGTH: Keep your response concise, around 150 words. Be focused and substantive.',
-    extendedGuidance: 'RESPONSE LENGTH: You may elaborate more this turn (~400 words). Develop your ideas fully.',
-  },
-  detailed: {
-    wordLimit: 300,
-    extendedMultiplier: 2,
-    extendedChance: 25,
-    promptGuidance: 'RESPONSE LENGTH: Provide a detailed response (~300 words). Include reasoning and examples.',
-    extendedGuidance: 'RESPONSE LENGTH: Take your time this turn (~600 words). Provide comprehensive analysis with examples.',
-  },
-  deep: {
-    wordLimit: 500,
-    extendedMultiplier: 2,
-    extendedChance: 30,
-    promptGuidance: 'RESPONSE LENGTH: Provide comprehensive analysis (~500 words). Explore all angles, give detailed reasoning.',
-    extendedGuidance: 'RESPONSE LENGTH: This is your turn to go deep (~1000 words). Exhaustive exploration is encouraged.',
-  },
-};
-
-/**
  * Get depth configuration for a conversation
  * Falls back to 'standard' if no depth is set
  */
-export function getDepthConfig(depth?: ConversationDepth): DepthConfig {
-  return DEPTH_CONFIGS[depth ?? 'standard'];
+export function getDepthConfig(depth?: ConversationDepth, targetLanguage?: string): DepthConfig {
+  const depthKey = depth ?? 'standard';
+  const numericConfig = DEPTH_NUMERIC_CONFIGS[depthKey];
+  const prompts = languageService.getPromptsSync(targetLanguage || '');
+  const depthPrompts = prompts.agent.depthConfigs[depthKey];
+  
+  return {
+    ...numericConfig,
+    promptGuidance: depthPrompts.promptGuidance,
+    extendedGuidance: depthPrompts.extendedGuidance,
+  };
 }
 
 /**
@@ -107,7 +86,7 @@ export function calculateWordLimit(
 ): WordLimitResult {
   // Get depth config if conversationDepth is set
   const depthConfig = conversation.conversationDepth 
-    ? getDepthConfig(conversation.conversationDepth) 
+    ? getDepthConfig(conversation.conversationDepth, conversation.targetLanguage) 
     : null;
   
   // Get base limit: agent override > depth config > conversation default > global default
@@ -158,10 +137,13 @@ export function calculateWordLimit(
 function buildWordLimitInstruction(
   wordLimit: WordLimitResult, 
   thinkingDepth: number, 
-  conversationDepth?: ConversationDepth
+  conversationDepth?: ConversationDepth,
+  targetLanguage?: string
 ): string {
+  const prompts = languageService.getPromptsSync(targetLanguage || '');
+  
   // Get depth config for specialized prompts
-  const depthConfig = conversationDepth ? getDepthConfig(conversationDepth) : null;
+  const depthConfig = conversationDepth ? getDepthConfig(conversationDepth, targetLanguage) : null;
   
   // Adjust limit slightly based on thinking depth (deeper thinkers get 10-20% bonus)
   const depthBonus = Math.floor(wordLimit.limit * (thinkingDepth - 1) * 0.05);
@@ -177,49 +159,63 @@ function buildWordLimitInstruction(
   
   // Fallback to generic instructions (for backward compatibility)
   if (wordLimit.isExtended) {
-    return `\nRESPONSE LENGTH: You may elaborate more this turn. Aim for around ${adjustedLimit} words, but prioritize quality over hitting the exact count. This is a good opportunity to develop your ideas more fully.`;
+    return `\n${languageService.interpolate(prompts.agent.wordLimit.extended, { limit: adjustedLimit })}`;
   }
   
-  return `\nRESPONSE LENGTH: Keep your response concise, around ${adjustedLimit} words. Be focused and get to the point quickly while still being substantive.`;
+  return `\n${languageService.interpolate(prompts.agent.wordLimit.concise, { limit: adjustedLimit })}`;
+}
+
+/**
+ * Get thinking depth guidance from prompts
+ */
+function getThinkingDepthGuidance(depth: number, prompts: PromptTemplates): string {
+  const key = String(depth) as keyof typeof prompts.agent.thinkingDepth;
+  return prompts.agent.thinkingDepth[key] || prompts.agent.thinkingDepth.default;
+}
+
+/**
+ * Get creativity guidance from prompts
+ */
+function getCreativityGuidance(level: number, prompts: PromptTemplates): string {
+  const key = String(level) as keyof typeof prompts.agent.creativityGuidance;
+  return prompts.agent.creativityGuidance[key] || prompts.agent.creativityGuidance.default;
 }
 
 /**
  * Build system prompt for an agent
  */
 export function buildSystemPrompt(agent: Agent, conversation: Conversation): string {
+  const prompts = languageService.getPromptsSync(conversation.targetLanguage || '');
   const parts: string[] = [];
 
   // Core identity
-  parts.push(`You are ${agent.name}, a ${agent.role} with expertise in ${agent.expertise}.`);
+  parts.push(languageService.interpolate(prompts.agent.coreIdentity, {
+    name: agent.name,
+    role: agent.role,
+    expertise: agent.expertise,
+  }));
 
   // Conversation context
-  parts.push(`\nYou are participating in a collaborative discussion about: "${conversation.subject}"`);
-  parts.push(`The goal is: ${conversation.goal}`);
+  parts.push(`\n${languageService.interpolate(prompts.agent.conversationContext, { subject: conversation.subject })}`);
+  parts.push(languageService.interpolate(prompts.agent.goalTemplate, { goal: conversation.goal }));
 
   // Role-specific behavior
   if (agent.isSecretary) {
-    parts.push(`
-Your role is the SECRETARY. Your responsibilities:
-- Listen carefully to all participants
-- Identify and capture key insights, decisions, and action items
-- Maintain an objective summary of the discussion
-- Do NOT participate in the debate itself
-- Provide periodic summaries when asked
-- Update the result draft with important conclusions`);
+    parts.push(`\n${prompts.agent.secretaryRole}`);
   } else {
     // Thinking depth guidance
-    const depthGuidance = getThinkingDepthGuidance(agent.thinkingDepth);
+    const depthGuidance = getThinkingDepthGuidance(agent.thinkingDepth, prompts);
     parts.push(`\n${depthGuidance}`);
 
     // Creativity guidance
-    const creativityGuidance = getCreativityGuidance(agent.creativityLevel);
+    const creativityGuidance = getCreativityGuidance(agent.creativityLevel, prompts);
     parts.push(creativityGuidance);
 
     // Strategy-specific instructions
     if (conversation.startingStrategy) {
-      const strategyInstructions = getAgentInstructions(conversation.startingStrategy);
+      const strategyInstructions = getAgentInstructions(conversation.startingStrategy, conversation.targetLanguage);
       if (strategyInstructions) {
-        parts.push(`\nDiscussion approach: ${strategyInstructions}`);
+        parts.push(`\n${languageService.interpolate(prompts.agent.strategyApproach, { instructions: strategyInstructions })}`);
       }
     }
   }
@@ -231,72 +227,25 @@ Your role is the SECRETARY. Your responsibilities:
 
   // Formatting rules
   if (conversation.plainTextOnly) {
-    parts.push(`
-IMPORTANT: Respond in plain text only. Do NOT use:
-- Markdown formatting (no **, *, #, etc.)
-- Code blocks
-- Bullet points or numbered lists
-Keep your response as natural prose.`);
+    parts.push(`\n${prompts.agent.plainTextRules}`);
   }
 
   // Target language requirement
   if (conversation.targetLanguage) {
-    parts.push(`
-LANGUAGE REQUIREMENT: You MUST respond entirely in ${conversation.targetLanguage}.
-All your responses, explanations, and contributions must be written in ${conversation.targetLanguage}.
-Do not use any other language unless specifically quoting or referencing terms that have no equivalent.`);
+    parts.push(`\n${languageService.interpolate(prompts.agent.languageRequirement, { language: conversation.targetLanguage })}`);
   }
 
   // Interaction guidelines
-  parts.push(`
-When responding:
-- Be concise but thorough
-- Build on others' ideas or respectfully challenge them
-- If addressing someone specific, mention them by name
-- Consider the goal of the discussion
-- Contribute your unique perspective based on your expertise`);
+  parts.push(`\n${prompts.agent.interactionGuidelines}`);
 
   return parts.join('\n');
-}
-
-function getThinkingDepthGuidance(depth: number): string {
-  switch (depth) {
-    case 1:
-      return 'Keep your responses brief and high-level. Focus on quick insights.';
-    case 2:
-      return 'Provide moderate analysis. Balance depth with conciseness.';
-    case 3:
-      return 'Give thorough analysis with supporting reasoning. Explore implications.';
-    case 4:
-      return 'Provide deep, comprehensive analysis. Consider edge cases and nuances.';
-    case 5:
-      return 'Give exhaustive analysis. Explore every angle, provide detailed reasoning, and consider all implications.';
-    default:
-      return 'Provide balanced, thoughtful analysis.';
-  }
-}
-
-function getCreativityGuidance(level: number): string {
-  switch (level) {
-    case 1:
-      return 'Stick to conventional approaches and established best practices.';
-    case 2:
-      return 'Primarily conventional but open to slight variations.';
-    case 3:
-      return 'Balance conventional wisdom with creative alternatives.';
-    case 4:
-      return 'Lean toward creative and innovative approaches. Challenge assumptions.';
-    case 5:
-      return 'Think outside the box. Propose unconventional solutions and challenge established norms.';
-    default:
-      return 'Balance practicality with innovation.';
-  }
 }
 
 /**
  * Build the full conversation messages for an agent
  */
 export function buildConversationMessages(context: PromptContext): LLMMessage[] {
+  const prompts = languageService.getPromptsSync(context.conversation.targetLanguage || '');
   const messages: LLMMessage[] = [];
   const isFirstTurn = context.isFirstTurn ?? (context.messages.length === 0);
 
@@ -315,7 +264,8 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
     systemPrompt += buildWordLimitInstruction(
       wordLimit, 
       context.agent.thinkingDepth,
-      context.conversation.conversationDepth
+      context.conversation.conversationDepth,
+      context.conversation.targetLanguage
     );
   }
 
@@ -329,7 +279,9 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
   if (isFirstTurn && context.conversation.openingStatement) {
     messages.push({
       role: 'system',
-      content: `DISCUSSION CONTEXT:\n${context.conversation.openingStatement}`,
+      content: languageService.interpolate(prompts.context.discussionContext, { 
+        openingStatement: context.conversation.openingStatement 
+      }),
     });
   }
 
@@ -343,7 +295,7 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
     if (notebookContent) {
       messages.push({
         role: 'system',
-        content: `Your personal notes from this conversation:\n${notebookContent}`,
+        content: languageService.interpolate(prompts.context.notebookHeader, { notes: notebookContent }),
       });
     }
   }
@@ -352,7 +304,7 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
   if (context.secretarySummary) {
     messages.push({
       role: 'system',
-      content: `Current discussion summary:\n${context.secretarySummary}`,
+      content: languageService.interpolate(prompts.context.secretarySummary, { summary: context.secretarySummary }),
     });
   }
 
@@ -360,7 +312,7 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
   for (const interjection of context.interjections) {
     messages.push({
       role: 'user',
-      content: `[USER GUIDANCE]: ${interjection.content}`,
+      content: `${prompts.context.userGuidancePrefix}${interjection.content}`,
     });
   }
 
@@ -373,7 +325,7 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
     if (message.type === 'opening') {
       messages.push({
         role: 'system',
-        content: `[DISCUSSION OPENING]: ${message.content}`,
+        content: `${prompts.context.discussionOpeningPrefix}${message.content}`,
       });
     } else if (message.agentId === context.agent.id) {
       // This agent's own messages
@@ -385,12 +337,14 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
       // User interjections within the conversation
       messages.push({
         role: 'user',
-        content: `[USER]: ${message.content}`,
+        content: `${prompts.context.messagePrefixes.user}${message.content}`,
       });
     } else {
       // Other agents' messages
       const addressedTo = message.addressedTo
-        ? ` (addressed to ${context.allAgents.find(a => a.id === message.addressedTo)?.name || 'someone'})`
+        ? languageService.interpolate(prompts.context.messagePrefixes.addressedTo, {
+            addresseeName: context.allAgents.find(a => a.id === message.addressedTo)?.name || 'someone'
+          })
         : '';
       messages.push({
         role: 'user',
@@ -407,7 +361,7 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
   if (context.agent.isSecretary) {
     messages.push({
       role: 'user',
-      content: 'Provide a brief summary of the key points discussed so far. Focus on decisions, insights, and action items.',
+      content: prompts.context.turnPrompts.secretary,
     });
   } else if (isFirstTurn) {
     // Special prompt for first speaker
@@ -415,37 +369,24 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
       ? getStrategyById(context.conversation.startingStrategy) 
       : null;
     
-    let firstTurnPrompt = `You are opening this discussion, ${context.agent.name}. `;
+    let firstTurnPrompt = languageService.interpolate(prompts.context.turnPrompts.firstTurnOpening, {
+      agentName: context.agent.name,
+    });
     
-    if (strategy) {
-      switch (strategy.id) {
-        case 'open-brainstorm':
-          firstTurnPrompt += 'Start by sharing your initial ideas and thoughts freely. Encourage creative exploration.';
-          break;
-        case 'structured-debate':
-          firstTurnPrompt += 'Present your initial position on the topic with clear reasoning.';
-          break;
-        case 'decision-matrix':
-          firstTurnPrompt += 'Begin by identifying the key options or alternatives we should consider.';
-          break;
-        case 'problem-first':
-          firstTurnPrompt += 'Start by analyzing and defining the problem clearly before jumping to solutions.';
-          break;
-        case 'expert-deep-dive':
-          firstTurnPrompt += 'Provide your expert analysis and insights on the topic.';
-          break;
-        case 'devils-advocate':
-          firstTurnPrompt += 'Challenge the assumptions and conventional thinking around this topic.';
-          break;
-        default:
-          firstTurnPrompt += 'Share your perspective to kick off the discussion.';
-      }
+    if (strategy && strategy.id in prompts.strategies) {
+      // Get strategy-specific first turn prompt from language service
+      // Strategy IDs are valid keys in strategies (excluding defaultFirstTurnPrompt)
+      type StrategyKey = 'open-brainstorm' | 'structured-debate' | 'decision-matrix' | 'problem-first' | 'expert-deep-dive' | 'devils-advocate';
+      const strategyPrompts = prompts.strategies[strategy.id as StrategyKey];
+      firstTurnPrompt += strategyPrompts.firstTurnPrompt;
     } else {
-      firstTurnPrompt += 'Share your perspective to kick off the discussion.';
+      firstTurnPrompt += prompts.strategies.defaultFirstTurnPrompt;
     }
     
     if (otherAgentNames.length > 0) {
-      firstTurnPrompt += ` Other participants (${otherAgentNames.join(', ')}) will respond after you.`;
+      firstTurnPrompt += languageService.interpolate(prompts.context.turnPrompts.firstTurnParticipants, {
+        participants: otherAgentNames.join(', '),
+      });
     }
     
     messages.push({
@@ -455,12 +396,17 @@ export function buildConversationMessages(context: PromptContext): LLMMessage[] 
   } else if (otherAgentNames.length > 0) {
     messages.push({
       role: 'user',
-      content: `It's your turn to contribute, ${context.agent.name}. Consider what others have said and share your perspective. You can address specific participants (${otherAgentNames.join(', ')}) or respond to the group.`,
+      content: languageService.interpolate(prompts.context.turnPrompts.regularTurn, {
+        agentName: context.agent.name,
+        participants: otherAgentNames.join(', '),
+      }),
     });
   } else {
     messages.push({
       role: 'user',
-      content: `It's your turn to contribute, ${context.agent.name}. Share your perspective on the topic.`,
+      content: languageService.interpolate(prompts.context.turnPrompts.regularTurnAlone, {
+        agentName: context.agent.name,
+      }),
     });
   }
 
@@ -502,11 +448,11 @@ function truncateNotebook(notes: string, usagePercent: number, maxTokens: number
  * Build a summary prompt for the secretary
  */
 export function buildSummaryPrompt(messages: Message[], agents: Agent[], targetLanguage?: string): LLMMessage[] {
-  let systemPrompt = `You are a skilled summarizer. Your task is to extract the key points, decisions, and insights from a discussion. Be concise and objective.`;
+  const prompts = languageService.getPromptsSync(targetLanguage || '');
   
-  if (targetLanguage) {
-    systemPrompt += `\n\nIMPORTANT: Write your summary entirely in ${targetLanguage}.`;
-  }
+  let systemPrompt = targetLanguage 
+    ? languageService.interpolate(prompts.secretary.summarySystemWithLanguage, { language: targetLanguage })
+    : prompts.secretary.summarySystem;
 
   const conversationText = messages.map(m => {
     const sender = agents.find(a => a.id === m.agentId);
@@ -515,22 +461,27 @@ export function buildSummaryPrompt(messages: Message[], agents: Agent[], targetL
 
   return [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `Summarize the following discussion:\n\n${conversationText}\n\nProvide:\n1. Key Points\n2. Decisions Made\n3. Open Questions\n4. Action Items (if any)` },
+    { role: 'user', content: languageService.interpolate(prompts.secretary.summaryUser, { conversation: conversationText }) },
   ];
 }
 
 /**
  * Build a note extraction prompt
  */
-export function buildNotePrompt(message: string, existingNotes: string): LLMMessage[] {
+export function buildNotePrompt(message: string, existingNotes: string, targetLanguage?: string): LLMMessage[] {
+  const prompts = languageService.getPromptsSync(targetLanguage || '');
+  
   return [
     {
       role: 'system',
-      content: 'Extract 1-2 key points from this message that might be useful to remember. Be extremely concise (max 50 words total).',
+      content: prompts.secretary.noteExtractionSystem,
     },
     {
       role: 'user',
-      content: `Message: ${message}\n\nExisting notes: ${existingNotes || 'None'}\n\nExtract any new important points not already in the notes:`,
+      content: languageService.interpolate(prompts.secretary.noteExtractionUser, {
+        message,
+        existingNotes: existingNotes || 'None',
+      }),
     },
   ];
 }
@@ -590,6 +541,7 @@ export function buildDistillationPrompt(
   conversationSubject: string,
   targetLanguage?: string
 ): LLMMessage[] {
+  const prompts = languageService.getPromptsSync(targetLanguage || '');
   const agentMap = new Map(agents.map(a => [a.id, a.name]));
   
   // Format messages for distillation
@@ -624,54 +576,16 @@ export function buildDistillationPrompt(
     }
   }
 
-  let systemPrompt = `You are a skilled conversation analyst. Your task is to distill conversation messages into a compact, structured summary that preserves the essential context while dramatically reducing the token count.
-
-CONVERSATION TOPIC: ${conversationSubject}
-
-Your goals:
-1. Preserve ALL important decisions, conclusions, and facts
-2. Maintain understanding of where the discussion currently stands
-3. Identify key terms, constraints, and consensus/disagreement points
-4. Remove redundancy, filler, and superseded information
-5. Create a summary that allows participants to continue the discussion seamlessly
-
-You MUST respond with valid JSON matching this exact structure:
-{
-  "distilledSummary": "A concise narrative (150-300 words) capturing the essence of the discussion. Include who said what when it's important for context.",
-  "currentStance": "Brief description of where the discussion currently stands (1-2 sentences)",
-  "keyDecisions": ["Array of concrete decisions that have been made"],
-  "openQuestions": ["Array of unresolved questions still being discussed"],
-  "constraints": ["Array of constraints or requirements identified"],
-  "actionItems": ["Array of agreed action items or next steps"],
-  "pinnedFacts": [
-    {
-      "content": "A key fact, term, or decision that must be preserved",
-      "category": "decision|constraint|definition|consensus|disagreement|action",
-      "source": "Name of participant who introduced this (optional)",
-      "importance": 1-10
-    }
-  ]
-}
-
-IMPORTANT RULES:
-- Be ruthlessly concise while preserving meaning
-- Remove information that has been superseded by later discussion
-- Merge similar points rather than listing redundantly
-- Preserve direct quotes only if critically important
-- Keep pinnedFacts to max 10 most important items (importance >= 7)
-- If merging with existing distillation, update rather than duplicate`;
+  let systemPrompt = languageService.interpolate(prompts.secretary.distillationSystem, { subject: conversationSubject });
 
   if (targetLanguage) {
     systemPrompt += `\n\nIMPORTANT: Write ALL content in ${targetLanguage}. The JSON keys remain in English, but all string values must be in ${targetLanguage}.`;
   }
 
-  const userPrompt = `Distill the following conversation segment into structured JSON:
-${existingContext}
-
-NEW MESSAGES TO DISTILL:
-${conversationText}
-
-Respond ONLY with the JSON object, no other text.`;
+  const userPrompt = languageService.interpolate(prompts.secretary.distillationUser, {
+    existingContext,
+    messages: conversationText,
+  });
 
   return [
     { role: 'system', content: systemPrompt },
@@ -748,4 +662,3 @@ export function parseDistillationResponse(response: string): DistillationOutput 
     return null;
   }
 }
-
