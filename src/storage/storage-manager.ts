@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Storage Manager
-// Version: 2.4.0
+// Version: 2.5.0
 // ============================================
 
 import { v4 as uuidv4 } from 'uuid';
@@ -21,6 +21,8 @@ import type {
   DistilledMemory,
   UpdateDistilledMemory,
   PinnedFact,
+  ContextSnapshot,
+  CreateContextSnapshot,
   AgentPreset,
   CreateAgentPreset,
   UpdateAgentPreset,
@@ -93,7 +95,7 @@ export const conversationStorage = {
   },
 
   async delete(id: string): Promise<void> {
-    await db.transaction('rw', [db.conversations, db.agents, db.turns, db.messages, db.notebooks, db.resultDrafts, db.distilledMemories, db.userInterjections], async () => {
+    await db.transaction('rw', [db.conversations, db.agents, db.turns, db.messages, db.notebooks, db.resultDrafts, db.distilledMemories, db.contextSnapshots, db.userInterjections], async () => {
       // Delete all related data
       const agents = await db.agents.where('conversationId').equals(id).toArray();
       for (const agent of agents) {
@@ -104,6 +106,7 @@ export const conversationStorage = {
       await db.messages.where('conversationId').equals(id).delete();
       await db.resultDrafts.delete(id);
       await db.distilledMemories.delete(id);
+      await db.contextSnapshots.where('conversationId').equals(id).delete();
       await db.userInterjections.where('conversationId').equals(id).delete();
       await db.conversations.delete(id);
     });
@@ -612,6 +615,71 @@ export const distilledMemoryStorage = {
       lastDistilledMessageId: '',
       totalMessagesDistilled: 0,
     });
+  },
+};
+
+// ============================================
+// Context Snapshots
+// ============================================
+
+export const contextSnapshotStorage = {
+  /**
+   * Create a context snapshot for a turn
+   */
+  async create(data: CreateContextSnapshot): Promise<ContextSnapshot> {
+    const snapshot: ContextSnapshot = {
+      ...data,
+      createdAt: Date.now(),
+    };
+    await db.contextSnapshots.put(snapshot);
+    return snapshot;
+  },
+
+  /**
+   * Get context snapshot by turn ID
+   */
+  async getByTurnId(turnId: string): Promise<ContextSnapshot | undefined> {
+    return db.contextSnapshots.get(turnId);
+  },
+
+  /**
+   * Get all context snapshots for a conversation
+   */
+  async getByConversation(conversationId: string): Promise<ContextSnapshot[]> {
+    return db.contextSnapshots.where('conversationId').equals(conversationId).toArray();
+  },
+
+  /**
+   * Get context snapshots for multiple turn IDs (batch fetch)
+   */
+  async getByTurnIds(turnIds: string[]): Promise<Map<string, ContextSnapshot>> {
+    const snapshots = await db.contextSnapshots
+      .where('turnId')
+      .anyOf(turnIds)
+      .toArray();
+    return new Map(snapshots.map(s => [s.turnId, s]));
+  },
+
+  /**
+   * Delete context snapshot by turn ID
+   */
+  async delete(turnId: string): Promise<void> {
+    await db.contextSnapshots.delete(turnId);
+  },
+
+  /**
+   * Delete all context snapshots for a conversation
+   */
+  async deleteByConversation(conversationId: string): Promise<number> {
+    return db.contextSnapshots.where('conversationId').equals(conversationId).delete();
+  },
+
+  /**
+   * Check if a context snapshot exists for a turn
+   */
+  async exists(turnId: string): Promise<boolean> {
+    const snapshot = await db.contextSnapshots.get(turnId);
+    return !!snapshot;
   },
 };
 

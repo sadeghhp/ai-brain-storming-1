@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.8.0
+// Version: 1.9.0
 // ============================================
 
 // ----- Enums -----
@@ -171,6 +171,32 @@ export interface PinnedFact {
   source?: string;               // Who introduced this (agent name)
   round: number;                 // When it was introduced
   importance: number;            // 1-10 scale
+}
+
+/**
+ * ContextSnapshot - Snapshot of context/distillation used for a turn
+ * 
+ * This captures the state of distilled memory and context that was
+ * provided to an agent when generating their response, allowing
+ * users to inspect what information informed each message.
+ */
+export interface ContextSnapshot {
+  turnId: string;                 // Links to the turn/message
+  conversationId: string;
+  
+  // Distillation state
+  distilledMemoryUsed: boolean;   // Whether distilled memory was included
+  distilledSummary?: string;      // The distilled summary text (if used)
+  pinnedFacts?: PinnedFact[];     // Key facts that were included
+  currentStance?: string;         // Current discussion state
+  keyDecisions?: string[];        // Key decisions made so far
+  openQuestions?: string[];       // Unresolved questions
+  
+  // Context metadata
+  messagesIncludedCount: number;  // Number of raw messages included
+  notebookUsed: boolean;          // Whether agent's notebook was included
+  
+  createdAt: number;
 }
 
 export interface AgentPreset {
@@ -374,4 +400,8 @@ export type UpdateAgentPreset = DeepPartial<Omit<AgentPreset, 'id' | 'isBuiltIn'
 // Distilled Memory DTOs
 export type CreateDistilledMemory = Omit<DistilledMemory, 'updatedAt'>;
 export type UpdateDistilledMemory = DeepPartial<Omit<DistilledMemory, 'conversationId'>>;
+
+// Context Snapshot DTOs
+export type CreateContextSnapshot = Omit<ContextSnapshot, 'createdAt'>;
+export type UpdateContextSnapshot = DeepPartial<Omit<ContextSnapshot, 'turnId' | 'conversationId'>>;
 

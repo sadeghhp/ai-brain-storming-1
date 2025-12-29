@@ -1,18 +1,21 @@
 // ============================================
 // AI Brainstorm - Message Stream Component
-// Version: 1.5.0
+// Version: 1.6.1
 // ============================================
 
-import { messageStorage, agentStorage } from '../storage/storage-manager';
+import { messageStorage, agentStorage, contextSnapshotStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { formatRelativeTime, escapeHtml, parseBasicFormatting } from '../utils/helpers';
 import { isRTLLanguage } from '../utils/languages';
-import type { Message, Agent } from '../types';
+import type { Message, Agent, ContextSnapshot } from '../types';
+import './distillation-popup';
+import type { DistillationPopup } from './distillation-popup';
 
 export class MessageStream extends HTMLElement {
   private messages: Message[] = [];
   private agents: Map<string, Agent> = new Map();
+  private contextSnapshots: Map<string, ContextSnapshot> = new Map(); // turnId -> snapshot
   private conversationId: string | null = null;
   private targetLanguage: string = '';
   private isRTL: boolean = false;
@@ -21,6 +24,7 @@ export class MessageStream extends HTMLElement {
   private streamingContent: string = '';
   private collapsedMessages: Set<string> = new Set();
   private isClickHandlerAttached = false;
+  private distillationPopup: DistillationPopup | null = null;
 
   static get observedAttributes() {
     return ['conversation-id', 'target-language'];
@@ -63,15 +67,32 @@ export class MessageStream extends HTMLElement {
 
     // Load messages
     this.messages = await messageStorage.getByConversation(this.conversationId);
+    
+    // Load context snapshots for messages that have turnIds
+    await this.loadContextSnapshots();
+    
     this.renderMessages();
+  }
+
+  /**
+   * Load context snapshots for all messages with turnIds
+   */
+  private async loadContextSnapshots() {
+    const turnIds = this.messages
+      .filter(m => m.turnId && m.type === 'response')
+      .map(m => m.turnId as string);
+    
+    if (turnIds.length > 0) {
+      this.contextSnapshots = await contextSnapshotStorage.getByTurnIds(turnIds);
+    }
   }
 
   private setupEventListeners() {
     // New message
-    eventBus.on('message:created', (message: Message) => {
+    eventBus.on('message:created', async (message: Message) => {
       if (message.conversationId === this.conversationId) {
         this.messages.push(message);
-        this.appendMessage(message);
+        await this.appendMessage(message);
         this.scrollToBottom();
       }
     });
@@ -120,6 +141,7 @@ export class MessageStream extends HTMLElement {
    */
   private clearMessages() {
     this.messages = [];
+    this.contextSnapshots.clear();
     this.streamingAgentId = null;
     this.streamingContent = '';
     this.collapsedMessages.clear();
@@ -291,6 +313,51 @@ export class MessageStream extends HTMLElement {
           font-size: var(--text-xs);
           color: var(--color-primary);
           margin-left: var(--space-2);
+        }
+
+        /* Distillation context icon */
+        .distillation-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 22px;
+          height: 22px;
+          padding: 0;
+          background: transparent;
+          border: none;
+          border-radius: var(--radius-sm);
+          color: var(--color-text-tertiary);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          margin-left: auto;
+        }
+
+        .distillation-btn:hover {
+          background: var(--color-surface);
+          color: var(--color-text-primary);
+        }
+
+        .distillation-btn svg {
+          width: 14px;
+          height: 14px;
+        }
+
+        .distillation-btn.active {
+          color: var(--color-primary);
+        }
+
+        .distillation-btn.active:hover {
+          background: var(--color-primary-dim);
+        }
+
+        .distillation-btn.inactive {
+          opacity: 0.4;
+          cursor: default;
+        }
+
+        .distillation-btn.inactive:hover {
+          background: transparent;
+          color: var(--color-text-tertiary);
         }
 
         .interjection .message-body {
@@ -707,7 +774,12 @@ export class MessageStream extends HTMLElement {
           <p>No messages yet. Start the conversation!</p>
         </div>
       </div>
+      
+      <distillation-popup id="distillation-popup"></distillation-popup>
     `;
+    
+    // Get reference to distillation popup
+    this.distillationPopup = this.shadowRoot.getElementById('distillation-popup') as DistillationPopup;
 
     // Scroll handler
     const container = this.shadowRoot.getElementById('messages');
@@ -744,8 +816,27 @@ export class MessageStream extends HTMLElement {
         if (preview) {
           const messageId = preview.getAttribute('data-id');
           if (messageId) this.toggleMessageCollapse(messageId);
+          return;
+        }
+
+        // Handle distillation button click
+        const distillationBtn = target.closest('.distillation-btn') as HTMLElement | null;
+        if (distillationBtn && !distillationBtn.hasAttribute('disabled')) {
+          e.stopPropagation();
+          const turnId = distillationBtn.getAttribute('data-turn-id');
+          if (turnId) this.showDistillationPopup(turnId);
         }
       });
+    }
+  }
+
+  /**
+   * Show the distillation popup for a specific turn
+   */
+  private showDistillationPopup(turnId: string) {
+    const snapshot = this.contextSnapshots.get(turnId);
+    if (snapshot && this.distillationPopup) {
+      this.distillationPopup.show(snapshot);
     }
   }
 
@@ -778,6 +869,7 @@ export class MessageStream extends HTMLElement {
     const agent = message.agentId ? this.agents.get(message.agentId) : null;
     const isInterjection = message.type === 'interjection';
     const isSecretary = agent?.isSecretary;
+    const isAgentResponse = message.type === 'response' && message.turnId;
 
     const name = isInterjection ? 'User' : (agent?.name || 'System');
     const color = isInterjection ? 'var(--color-secondary)' : (agent?.color || 'var(--color-text-tertiary)');
@@ -787,6 +879,10 @@ export class MessageStream extends HTMLElement {
     const formattedContent = parseBasicFormatting(escapeHtml(message.content));
     const isCollapsed = this.collapsedMessages.has(message.id);
     const previewText = message.content.slice(0, 80).replace(/\n/g, ' ') + (message.content.length > 80 ? '...' : '');
+    
+    // Get context snapshot for this message (if it's an agent response)
+    const snapshot = message.turnId ? this.contextSnapshots.get(message.turnId) ?? null : null;
+    const hasDistillation = snapshot?.distilledMemoryUsed ?? false;
 
     return `
       <div class="message ${isInterjection ? 'interjection' : ''} ${isSecretary ? 'secretary' : ''} ${isCollapsed ? 'is-collapsed' : ''}" data-id="${message.id}">
@@ -804,6 +900,7 @@ export class MessageStream extends HTMLElement {
             ${role ? `<span class="message-role">${escapeHtml(role)}</span>` : ''}
             <span class="message-time">${formatRelativeTime(message.createdAt)}</span>
             ${message.weight > 0 ? `<span class="weight-badge">+${message.weight}</span>` : ''}
+            ${isAgentResponse ? this.renderDistillationIcon(message.turnId!, snapshot, hasDistillation) : ''}
           </div>
           <div class="collapsed-preview" data-id="${message.id}">${escapeHtml(previewText)}</div>
           <div class="message-body-wrapper ${isCollapsed ? 'collapsed' : ''}">
@@ -829,7 +926,34 @@ export class MessageStream extends HTMLElement {
     `;
   }
 
-  private appendMessage(message: Message) {
+  /**
+   * Render the distillation context icon
+   */
+  private renderDistillationIcon(turnId: string, snapshot: ContextSnapshot | null, hasDistillation: boolean): string {
+    // Active (colored) only when distillation was actually used.
+    // Inactive (grey) when distillation was NOT used (but snapshot exists and can still be opened).
+    const isActive = hasDistillation;
+    const title = !snapshot
+      ? 'No context snapshot available'
+      : hasDistillation
+        ? 'View context used for this response (distillation active)'
+        : 'No distillation used for this response (click to view details)';
+    
+    return `
+      <button class="distillation-btn ${isActive ? 'active' : 'inactive'}" 
+              data-turn-id="${turnId}" 
+              title="${title}"
+              ${!snapshot ? 'disabled' : ''}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
+          <path d="M12 6a4 4 0 0 0-4 4c0 2 2 4 4 4s4-2 4-4a4 4 0 0 0-4-4z"/>
+          <path d="M19.5 17.5A8.5 8.5 0 0 0 12 14a8.5 8.5 0 0 0-7.5 3.5"/>
+        </svg>
+      </button>
+    `;
+  }
+
+  private async appendMessage(message: Message) {
     const container = this.shadowRoot?.getElementById('messages');
     const toolbar = this.shadowRoot?.getElementById('toolbar');
     if (!container) return;
@@ -847,6 +971,14 @@ export class MessageStream extends HTMLElement {
     const streamingBubble = container.querySelector('.streaming-message');
     if (streamingBubble) {
       streamingBubble.remove();
+    }
+
+    // Load context snapshot for this message if it has a turnId
+    if (message.turnId && message.type === 'response') {
+      const snapshot = await contextSnapshotStorage.getByTurnId(message.turnId);
+      if (snapshot) {
+        this.contextSnapshots.set(message.turnId, snapshot);
+      }
     }
 
     container.insertAdjacentHTML('beforeend', this.renderMessage(message));

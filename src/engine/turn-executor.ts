@@ -1,16 +1,16 @@
 // ============================================
 // AI Brainstorm - Turn Executor
-// Version: 1.3.0
+// Version: 1.4.1
 // ============================================
 
 import { Agent } from '../agents/agent';
 import { NotebookManager } from '../agents/notebook';
-import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage, resultDraftStorage, distilledMemoryStorage } from '../storage/storage-manager';
+import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage, resultDraftStorage, distilledMemoryStorage, contextSnapshotStorage } from '../storage/storage-manager';
 import { creativityToTemperature } from '../llm/prompt-builder';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
-import { ContextBuilder } from './context-builder';
-import type { Turn, Message, Conversation } from '../types';
+import { ContextBuilder, ContextComponents } from './context-builder';
+import type { Turn, Message, Conversation, DistilledMemory, CreateContextSnapshot } from '../types';
 import type { LLMMessage, LLMResponse } from '../llm/types';
 
 export interface TurnResult {
@@ -51,8 +51,11 @@ export class TurnExecutor {
       await turnStorage.updateState(turn.id, 'running');
       eventBus.emit('turn:started', turn);
 
-      // Build context
-      const messages = await this.buildContext(agent);
+      // Build context and get context components for snapshot
+      const { messages, contextComponents, distilledMemory, notebookUsed } = await this.buildContextWithSnapshot(agent);
+
+      // Save context snapshot for this turn (for distillation viewer)
+      await this.saveContextSnapshot(turn.id, contextComponents, distilledMemory, notebookUsed);
 
       // Store prompt for debugging
       await turnStorage.updateState(turn.id, 'running', {
@@ -163,8 +166,14 @@ export class TurnExecutor {
 
   /**
    * Build context messages for the agent using ContextBuilder
+   * Returns both messages and context components for snapshot saving
    */
-  private async buildContext(agent: Agent): Promise<LLMMessage[]> {
+  private async buildContextWithSnapshot(agent: Agent): Promise<{
+    messages: LLMMessage[];
+    contextComponents: ContextComponents;
+    distilledMemory: DistilledMemory | undefined;
+    notebookUsed: boolean;
+  }> {
     // Get all agents
     const allAgents = await agentStorage.getByConversation(this.conversation.id);
     
@@ -209,7 +218,46 @@ export class TurnExecutor {
       console.log(`[TurnExecutor] Using distilled memory (${distilledMemory?.totalMessagesDistilled || 0} messages distilled)`);
     }
 
-    return contextComponents.promptMessages;
+    return {
+      messages: contextComponents.promptMessages,
+      contextComponents,
+      distilledMemory,
+      notebookUsed: !!notebook?.notes,
+    };
+  }
+
+  /**
+   * Save a context snapshot for the turn (for distillation viewer)
+   */
+  private async saveContextSnapshot(
+    turnId: string,
+    contextComponents: ContextComponents,
+    distilledMemory: DistilledMemory | undefined,
+    notebookUsed: boolean
+  ): Promise<void> {
+    try {
+      // Only store distilled-memory fields if they were actually included in the prompt.
+      const distilledMemoryUsed = contextComponents.distilledMemoryUsed;
+      const distilled = distilledMemoryUsed ? distilledMemory : undefined;
+
+      const snapshotData: CreateContextSnapshot = {
+        turnId,
+        conversationId: this.conversation.id,
+        distilledMemoryUsed,
+        distilledSummary: distilled?.distilledSummary || undefined,
+        pinnedFacts: distilled?.pinnedFacts || undefined,
+        currentStance: distilled?.currentStance || undefined,
+        keyDecisions: distilled?.keyDecisions || undefined,
+        openQuestions: distilled?.openQuestions || undefined,
+        messagesIncludedCount: contextComponents.messages.length,
+        notebookUsed,
+      };
+      
+      await contextSnapshotStorage.create(snapshotData);
+    } catch (error) {
+      // Don't fail the turn if snapshot save fails
+      console.warn('[TurnExecutor] Failed to save context snapshot:', error);
+    }
   }
 
   /**

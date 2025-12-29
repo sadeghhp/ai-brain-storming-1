@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Database Layer (Dexie/IndexedDB)
-// Version: 2.1.0
+// Version: 2.2.0
 // ============================================
 
 import Dexie, { type Table } from 'dexie';
@@ -12,6 +12,7 @@ import type {
   Notebook,
   ResultDraft,
   DistilledMemory,
+  ContextSnapshot,
   AgentPreset,
   LLMProvider,
   UserInterjection,
@@ -27,6 +28,7 @@ export class BrainstormDB extends Dexie {
   notebooks!: Table<Notebook, string>;
   resultDrafts!: Table<ResultDraft, string>;
   distilledMemories!: Table<DistilledMemory, string>;
+  contextSnapshots!: Table<ContextSnapshot, string>;
   agentPresets!: Table<AgentPreset, string>;
   llmProviders!: Table<LLMProvider, string>;
   userInterjections!: Table<UserInterjection, string>;
@@ -119,6 +121,23 @@ export class BrainstormDB extends Dexie {
       notebooks: 'agentId',
       resultDrafts: 'conversationId',
       distilledMemories: 'conversationId, lastDistilledRound', // Indexed by conversation and round
+      agentPresets: 'id, category, isBuiltIn, name',
+      llmProviders: 'id, apiFormat, isActive',
+      userInterjections: 'id, conversationId, [conversationId+afterRound], processed, [conversationId+processed]',
+      userReactions: 'id, messageId',
+      appSettings: 'id',
+    });
+
+    // Version 5: Add contextSnapshots table for displaying distillation context per message
+    this.version(5).stores({
+      conversations: 'id, status, createdAt, updatedAt',
+      turns: 'id, conversationId, agentId, [conversationId+round], [conversationId+round+sequence], state',
+      agents: 'id, conversationId, [conversationId+order], isSecretary',
+      messages: 'id, conversationId, turnId, agentId, [conversationId+round], createdAt, type',
+      notebooks: 'agentId',
+      resultDrafts: 'conversationId',
+      distilledMemories: 'conversationId, lastDistilledRound',
+      contextSnapshots: 'turnId, conversationId', // Indexed by turnId (primary) and conversationId
       agentPresets: 'id, category, isBuiltIn, name',
       llmProviders: 'id, apiFormat, isActive',
       userInterjections: 'id, conversationId, [conversationId+afterRound], processed, [conversationId+processed]',
