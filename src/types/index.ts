@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.10.0
+// Version: 1.11.0
 // ============================================
 
 // ----- Enums -----
@@ -11,6 +11,11 @@ export type ConversationDepth = 'brief' | 'concise' | 'standard' | 'detailed' | 
 export type TurnState = 'planned' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type MessageType = 'response' | 'summary' | 'interjection' | 'system' | 'opening';
 export type ApiFormat = 'openai' | 'anthropic' | 'ollama';
+
+// MCP (Model Context Protocol) types
+export type MCPTransport = 'http' | 'stdio';
+export type ToolApprovalMode = 'auto' | 'approval';
+export type MCPToolCallStatus = 'pending' | 'approved' | 'denied' | 'executed' | 'failed';
 
 // Starting strategy types
 export type StartingStrategyId = 
@@ -57,6 +62,9 @@ export interface Conversation {
   targetLanguage?: string;
   // Archive status
   isArchived?: boolean;
+  // MCP (Model Context Protocol) settings
+  mcpServerIds?: string[];              // Allowed MCP server IDs for this conversation
+  mcpToolApprovalMode?: ToolApprovalMode; // 'auto' or 'approval' - how tool calls are handled
   createdAt: number;
   updatedAt: number;
 }
@@ -232,6 +240,56 @@ export interface LLMProvider {
   models: ProviderModel[];   // User-defined + auto-fetched models
 }
 
+// ----- MCP (Model Context Protocol) Types -----
+
+/**
+ * MCPTool - A tool exposed by an MCP server
+ */
+export interface MCPTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;  // JSON Schema for tool inputs
+}
+
+/**
+ * MCPServer - Configuration for an MCP server connection
+ */
+export interface MCPServer {
+  id: string;
+  name: string;
+  transport: MCPTransport;
+  // HTTP/SSE transport configuration
+  endpoint?: string;
+  authToken?: string;         // Bearer token for HTTP authentication
+  // Stdio transport configuration
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  // Connection state
+  isActive: boolean;
+  tools: MCPTool[];           // Discovered tools from the server
+  lastConnectedAt?: number;
+  lastError?: string;
+}
+
+/**
+ * MCPToolCall - A tool call made by an agent
+ */
+export interface MCPToolCall {
+  id: string;
+  conversationId: string;
+  turnId: string;
+  agentId: string;
+  serverId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  status: MCPToolCallStatus;
+  result?: string;
+  error?: string;
+  createdAt: number;
+  executedAt?: number;
+}
+
 export interface UserInterjection {
   id: string;
   conversationId: string;
@@ -362,6 +420,15 @@ export interface AppEvents {
   'stream:chunk': { agentId: string; content: string };
   'stream:complete': { agentId: string };
   'error': { message: string; details?: unknown };
+  // MCP events
+  'mcp:server-connected': MCPServer;
+  'mcp:server-disconnected': string;
+  'mcp:server-error': { serverId: string; error: string };
+  'mcp:tool-call-pending': MCPToolCall;
+  'mcp:tool-call-approved': MCPToolCall;
+  'mcp:tool-call-denied': MCPToolCall;
+  'mcp:tool-call-executed': MCPToolCall;
+  'mcp:tool-call-failed': MCPToolCall;
 }
 
 // ----- Utility Types -----
@@ -406,4 +473,12 @@ export type UpdateDistilledMemory = DeepPartial<Omit<DistilledMemory, 'conversat
 // Context Snapshot DTOs
 export type CreateContextSnapshot = Omit<ContextSnapshot, 'createdAt'>;
 export type UpdateContextSnapshot = DeepPartial<Omit<ContextSnapshot, 'turnId' | 'conversationId'>>;
+
+// MCP Server DTOs
+export type CreateMCPServer = Omit<MCPServer, 'id' | 'isActive' | 'tools' | 'lastConnectedAt' | 'lastError'>;
+export type UpdateMCPServer = DeepPartial<Omit<MCPServer, 'id'>>;
+
+// MCP Tool Call DTOs
+export type CreateMCPToolCall = Omit<MCPToolCall, 'id' | 'createdAt' | 'executedAt' | 'result' | 'error'>;
+export type UpdateMCPToolCall = DeepPartial<Omit<MCPToolCall, 'id' | 'conversationId' | 'turnId' | 'agentId' | 'createdAt'>>;
 

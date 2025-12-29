@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Utility Helpers
-// Version: 1.0.0
+// Version: 1.0.1
 // ============================================
 
 /**
@@ -86,8 +86,13 @@ export function formatDateTime(timestamp: number): string {
 /**
  * Truncate text with ellipsis
  */
-export function truncate(text: string, maxLength: number): string {
+export function truncate(text: string | null | undefined, maxLength: number): string {
+  // Ensure text is a valid string - handle undefined, null, and non-string values
+  if (text === null || text === undefined || typeof text !== 'string') return '';
+  if (maxLength <= 0) return '';
   if (text.length <= maxLength) return text;
+  // If maxLength is too small to fit an ellipsis, just hard-cut.
+  if (maxLength <= 3) return text.slice(0, maxLength);
   return text.slice(0, maxLength - 3) + '...';
 }
 

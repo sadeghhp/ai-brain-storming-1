@@ -391,7 +391,7 @@ export class NavSidebar extends HTMLElement {
         <div class="conversation-item ${conv.id === this.selectedId ? 'selected' : ''} ${conv.isArchived ? 'archived' : ''}" data-id="${conv.id}">
           <div class="conv-header">
             <div class="conv-subject">
-              ${truncate(conv.subject, 35)}
+              ${truncate(conv.subject?.trim() ? conv.subject : 'Untitled', 35)}
               ${conv.isArchived ? '<span class="archived-badge">archived</span>' : ''}
             </div>
             <button class="archive-btn ${conv.isArchived ? 'unarchive' : ''}" data-id="${conv.id}" data-archived="${conv.isArchived ? 'true' : 'false'}" title="${conv.isArchived ? 'Unarchive' : 'Archive'}">

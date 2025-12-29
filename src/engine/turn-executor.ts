@@ -1,16 +1,17 @@
 // ============================================
 // AI Brainstorm - Turn Executor
-// Version: 1.5.0
+// Version: 1.6.0
 // ============================================
 
 import { Agent } from '../agents/agent';
 import { NotebookManager } from '../agents/notebook';
-import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage, resultDraftStorage, distilledMemoryStorage, contextSnapshotStorage } from '../storage/storage-manager';
+import { turnStorage, messageStorage, agentStorage, interjectionStorage, notebookStorage, resultDraftStorage, distilledMemoryStorage, contextSnapshotStorage, mcpServerStorage, mcpToolCallStorage } from '../storage/storage-manager';
 import { creativityToTemperature } from '../llm/prompt-builder';
 import { llmRouter } from '../llm/llm-router';
+import { mcpRouter, buildToolDescriptions, parseToolCalls, formatToolResult } from '../mcp';
 import { eventBus } from '../utils/event-bus';
 import { ContextBuilder, ContextComponents } from './context-builder';
-import type { Turn, Message, Conversation, DistilledMemory, CreateContextSnapshot } from '../types';
+import type { Turn, Message, Conversation, DistilledMemory, CreateContextSnapshot, MCPServer, MCPToolCall } from '../types';
 import type { LLMMessage, LLMResponse } from '../llm/types';
 
 export interface TurnResult {
@@ -18,6 +19,7 @@ export interface TurnResult {
   message?: Message;
   error?: string;
   tokensUsed: number;
+  toolCallsExecuted?: number;
 }
 
 /**
@@ -26,9 +28,136 @@ export interface TurnResult {
 export class TurnExecutor {
   private conversation: Conversation;
   private abortController: AbortController | null = null;
+  private mcpServers: MCPServer[] = [];
+  private mcpToolsLoaded: boolean = false;
 
   constructor(conversation: Conversation) {
     this.conversation = conversation;
+  }
+
+  /**
+   * Load MCP servers configured for this conversation
+   */
+  private async loadMCPTools(): Promise<void> {
+    if (this.mcpToolsLoaded) return;
+    
+    const serverIds = this.conversation.mcpServerIds;
+    if (!serverIds || serverIds.length === 0) {
+      this.mcpServers = [];
+      this.mcpToolsLoaded = true;
+      return;
+    }
+
+    this.mcpServers = await mcpServerStorage.getByIds(serverIds);
+    this.mcpToolsLoaded = true;
+  }
+
+  /**
+   * Get MCP tool descriptions for the context
+   */
+  private getMCPToolDescriptions(): string {
+    if (this.mcpServers.length === 0) return '';
+
+    const toolsWithServers = this.mcpServers.flatMap(server => 
+      server.tools.map(tool => ({
+        serverId: server.id,
+        serverName: server.name,
+        tool,
+      }))
+    );
+
+    if (toolsWithServers.length === 0) return '';
+
+    return buildToolDescriptions(toolsWithServers);
+  }
+
+  /**
+   * Process tool calls found in agent response
+   */
+  private async processToolCalls(
+    content: string,
+    turn: Turn,
+    agent: Agent
+  ): Promise<{ toolResults: string; toolCallsExecuted: number }> {
+    const toolCalls = parseToolCalls(content);
+    if (toolCalls.length === 0) {
+      return { toolResults: '', toolCallsExecuted: 0 };
+    }
+
+    const results: string[] = [];
+    let executedCount = 0;
+    const approvalMode = this.conversation.mcpToolApprovalMode || 'auto';
+
+    for (const call of toolCalls) {
+      // Find which server provides this tool
+      const serverInfo = this.mcpServers.find(s => 
+        s.tools.some(t => t.name === call.tool)
+      );
+
+      if (!serverInfo) {
+        results.push(`**Tool Error: ${call.tool}**\nTool not found in any configured MCP server.`);
+        continue;
+      }
+
+      // Create tool call record
+      const toolCallRecord = await mcpToolCallStorage.create({
+        conversationId: this.conversation.id,
+        turnId: turn.id,
+        agentId: agent.id,
+        serverId: serverInfo.id,
+        toolName: call.tool,
+        arguments: call.arguments,
+        status: approvalMode === 'auto' ? 'approved' : 'pending',
+      });
+
+      if (approvalMode === 'approval') {
+        // Emit event for approval and wait
+        eventBus.emit('mcp:tool-call-pending', toolCallRecord);
+        // For now, in approval mode, we'll skip execution and let the UI handle it
+        // A future enhancement would be to pause and wait for approval
+        results.push(`**Tool Pending Approval: ${call.tool}**\nThis tool call is waiting for user approval.`);
+        continue;
+      }
+
+      // Execute the tool (auto mode)
+      try {
+        // Check if server is connected
+        if (!mcpRouter.isConnected(serverInfo.id)) {
+          // Try to connect
+          await mcpRouter.connect(serverInfo.id);
+        }
+
+        const result = await mcpRouter.callTool(serverInfo.id, call.tool, call.arguments);
+        
+        // Update tool call record
+        const resultText = result.content.map(c => c.text || '').join('\n');
+        await mcpToolCallStorage.markExecuted(toolCallRecord.id, resultText);
+        
+        results.push(formatToolResult(call.tool, result));
+        executedCount++;
+
+        eventBus.emit('mcp:tool-call-executed', {
+          ...toolCallRecord,
+          status: 'executed',
+          result: resultText,
+        } as MCPToolCall);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        await mcpToolCallStorage.markFailed(toolCallRecord.id, errorMessage);
+        results.push(`**Tool Error: ${call.tool}**\n${errorMessage}`);
+
+        eventBus.emit('mcp:tool-call-failed', {
+          ...toolCallRecord,
+          status: 'failed',
+          error: errorMessage,
+        } as MCPToolCall);
+      }
+    }
+
+    return { 
+      toolResults: results.join('\n\n'), 
+      toolCallsExecuted: executedCount 
+    };
   }
 
   /**
@@ -51,8 +180,17 @@ export class TurnExecutor {
       await turnStorage.updateState(turn.id, 'running');
       eventBus.emit('turn:started', turn);
 
+      // Load MCP tools if configured
+      await this.loadMCPTools();
+      const mcpToolDescriptions = this.getMCPToolDescriptions();
+
       // Build context and get context components for snapshot
       const { messages, contextComponents, distilledMemory, notebookUsed } = await this.buildContextWithSnapshot(agent);
+
+      // Inject MCP tool descriptions into the system prompt if available
+      if (mcpToolDescriptions && messages.length > 0 && messages[0].role === 'system') {
+        messages[0].content += '\n\n' + mcpToolDescriptions;
+      }
 
       // Save context snapshot for this turn (for distillation viewer)
       await this.saveContextSnapshot(turn.id, contextComponents, distilledMemory, notebookUsed);
@@ -103,12 +241,30 @@ export class TurnExecutor {
         throw new Error('Empty response from LLM provider');
       }
 
+      // Process any MCP tool calls in the response
+      let finalContent = fullContent;
+      let toolCallsExecuted = 0;
+
+      if (this.mcpServers.length > 0) {
+        const { toolResults, toolCallsExecuted: executed } = await this.processToolCalls(
+          fullContent,
+          turn,
+          agent
+        );
+        toolCallsExecuted = executed;
+
+        // Append tool results to the message if any were executed
+        if (toolResults) {
+          finalContent += '\n\n---\n\n' + toolResults;
+        }
+      }
+
       // Create message
       const message = await messageStorage.create({
         turnId: turn.id,
         conversationId: this.conversation.id,
         agentId: agent.id,
-        content: fullContent,
+        content: finalContent,
         round: turn.round,
         type: 'response',
       });
@@ -130,6 +286,7 @@ export class TurnExecutor {
         success: true,
         message,
         tokensUsed: response.tokensUsed,
+        toolCallsExecuted,
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

@@ -1,30 +1,33 @@
 // ============================================
 // AI Brainstorm - Settings Panel Component
-// Version: 3.0.0
+// Version: 3.1.0
 // ============================================
 
-import { settingsStorage, providerStorage, presetStorage } from '../storage/storage-manager';
+import { settingsStorage, providerStorage, presetStorage, mcpServerStorage } from '../storage/storage-manager';
 import { presetCategories } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
+import { mcpRouter } from '../mcp';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { ALL_LANGUAGES } from '../utils/languages';
 import { downloadPresets, importPresets, downloadSelectedPresets } from '../utils/export';
 import { readFileContent } from '../utils/helpers';
-import type { AppSettings, LLMProvider, ApiFormat, AgentPreset } from '../types';
+import type { AppSettings, LLMProvider, ApiFormat, AgentPreset, MCPServer, MCPTransport } from '../types';
 import './agent-preset-editor-modal';
 import type { AgentPresetEditorModal } from './agent-preset-editor-modal';
 
-type SettingsTab = 'general' | 'providers' | 'presets' | 'languages';
+type SettingsTab = 'general' | 'providers' | 'mcp' | 'presets' | 'languages';
 
 export class SettingsPanel extends HTMLElement {
   private settings: AppSettings | null = null;
   private providers: LLMProvider[] = [];
   private presets: AgentPreset[] = [];
+  private mcpServers: MCPServer[] = [];
   private expandedAgentCategories: Set<string> = new Set();
   private activeTab: SettingsTab = 'general';
   private selectedPresetIds: Set<string> = new Set();
   private selectedProviderId: string | null = null;
+  private selectedMcpServerId: string | null = null;
   private languageFilter: string = '';
 
   constructor() {
@@ -41,6 +44,7 @@ export class SettingsPanel extends HTMLElement {
     this.settings = await settingsStorage.get();
     this.providers = await providerStorage.getAll();
     this.presets = await presetStorage.getAll();
+    this.mcpServers = await mcpServerStorage.getAll();
   }
 
   private render() {
@@ -848,6 +852,55 @@ export class SettingsPanel extends HTMLElement {
           line-height: 1;
         }
 
+        /* MCP Tools List */
+        .mcp-tools-list {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-2);
+          max-height: 200px;
+          overflow-y: auto;
+          padding: var(--space-2);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+        }
+
+        .mcp-tool-item {
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-bg-primary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+        }
+
+        .mcp-tool-name {
+          font-weight: var(--font-medium);
+          font-size: var(--text-sm);
+          color: var(--color-text-primary);
+          font-family: var(--font-mono, monospace);
+        }
+
+        .mcp-tool-description {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          margin-top: var(--space-1);
+        }
+
+        .btn-small {
+          padding: var(--space-1) var(--space-2);
+          font-size: var(--text-xs);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          color: var(--color-text-secondary);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .btn-small:hover {
+          background: var(--color-surface-hover);
+          color: var(--color-text-primary);
+        }
+
         .model-tag .remove-model:hover {
           opacity: 1;
         }
@@ -1515,6 +1568,14 @@ export class SettingsPanel extends HTMLElement {
           </svg>
           Providers
         </button>
+        <button class="tab ${this.activeTab === 'mcp' ? 'active' : ''}" data-tab="mcp">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+          MCP Servers
+        </button>
         <button class="tab ${this.activeTab === 'presets' ? 'active' : ''}" data-tab="presets">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -1565,6 +1626,47 @@ export class SettingsPanel extends HTMLElement {
           <div class="modal-actions">
             <button class="modal-btn cancel" id="cancel-add-provider">Cancel</button>
             <button class="modal-btn primary" id="confirm-add-provider">Add Provider</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add MCP Server Modal -->
+      <div class="modal-overlay" id="add-mcp-server-modal" style="display: none;">
+        <div class="modal">
+          <h3>Add MCP Server</h3>
+          <div class="form-group">
+            <label class="form-label">Server Name</label>
+            <input type="text" class="form-input" id="new-mcp-name" placeholder="e.g., My MCP Server">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Transport Type</label>
+            <select class="form-select" id="new-mcp-transport">
+              <option value="http">HTTP/SSE (Remote)</option>
+              <option value="stdio">Stdio (Local Process)</option>
+            </select>
+          </div>
+          <div class="form-group" id="mcp-endpoint-group">
+            <label class="form-label">Endpoint URL</label>
+            <input type="text" class="form-input" id="new-mcp-endpoint" placeholder="http://localhost:3000/mcp">
+            <div class="form-hint">The HTTP endpoint for the MCP server</div>
+          </div>
+          <div class="form-group" id="mcp-auth-token-group">
+            <label class="form-label">Auth Token (Optional)</label>
+            <input type="password" class="form-input" id="new-mcp-auth-token" placeholder="Bearer token for authentication">
+            <div class="form-hint">Authorization token sent with HTTP requests</div>
+          </div>
+          <div class="form-group" id="mcp-command-group" style="display: none;">
+            <label class="form-label">Command</label>
+            <input type="text" class="form-input" id="new-mcp-command" placeholder="npx -y @mcp/server">
+            <div class="form-hint">The command to start the MCP server</div>
+          </div>
+          <div class="form-group" id="mcp-args-group" style="display: none;">
+            <label class="form-label">Arguments (comma-separated)</label>
+            <input type="text" class="form-input" id="new-mcp-args" placeholder="--port, 3000">
+          </div>
+          <div class="modal-actions">
+            <button class="modal-btn cancel" id="cancel-add-mcp">Cancel</button>
+            <button class="modal-btn primary" id="confirm-add-mcp">Add Server</button>
           </div>
         </div>
       </div>
@@ -1960,6 +2062,180 @@ export class SettingsPanel extends HTMLElement {
     `;
   }
 
+  private renderMCPTab(): string {
+    // Auto-select first server if none selected
+    if (!this.selectedMcpServerId && this.mcpServers.length > 0) {
+      this.selectedMcpServerId = this.mcpServers[0].id;
+    }
+    
+    const selectedServer = this.mcpServers.find(s => s.id === this.selectedMcpServerId);
+    
+    return `
+      <div class="split-view">
+        <!-- Sidebar with MCP server list -->
+        <div class="split-sidebar">
+          <div class="split-sidebar-header">MCP Servers</div>
+          <div class="split-sidebar-list">
+            ${this.mcpServers.map(server => `
+              <div class="sidebar-item ${server.id === this.selectedMcpServerId ? 'active' : ''}" 
+                   data-mcp-server-id="${server.id}">
+                <span class="sidebar-item-icon ${server.isActive ? 'connected' : ''}"></span>
+                <span class="sidebar-item-name">${server.name}</span>
+                <span class="sidebar-item-format">${server.transport}</span>
+              </div>
+            `).join('')}
+          </div>
+          <div class="split-sidebar-footer">
+            <button class="add-provider-btn" id="add-mcp-server-btn" style="margin-bottom: 0;">+ Add MCP Server</button>
+          </div>
+        </div>
+
+        <!-- Details panel -->
+        <div class="split-details">
+          ${selectedServer ? this.renderMCPServerDetails(selectedServer) : `
+            <div class="split-details-empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+              <p>Select an MCP server or add a new one</p>
+              <p style="font-size: var(--text-sm); color: var(--color-text-tertiary); margin-top: var(--space-2);">
+                MCP (Model Context Protocol) servers provide tools that agents can use during conversations.
+              </p>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderMCPServerDetails(server: MCPServer): string {
+    const isConnected = mcpRouter.isConnected(server.id);
+    
+    return `
+      <div class="details-header">
+        <div>
+          <div class="details-title">${server.name}</div>
+          <div style="font-size: var(--text-sm); color: var(--color-text-tertiary); margin-top: var(--space-1);">
+            ${server.transport === 'http' ? 'HTTP/SSE Transport' : 'Stdio Transport'}
+          </div>
+        </div>
+        <div class="details-status">
+          <span class="status-dot ${isConnected ? 'connected' : ''}"></span>
+          <span>${isConnected ? 'Connected' : (server.lastError ? 'Error' : 'Disconnected')}</span>
+        </div>
+      </div>
+
+      ${server.transport === 'http' ? `
+        <div class="form-group">
+          <label class="form-label">Endpoint URL</label>
+          <input 
+            type="text" 
+            class="form-input mcp-endpoint-input" 
+            data-mcp-server="${server.id}"
+            value="${server.endpoint || ''}"
+            placeholder="http://localhost:3000/mcp"
+          >
+          <div class="form-hint">The HTTP endpoint for the MCP server (supports SSE)</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Auth Token (Optional)</label>
+          <input 
+            type="password" 
+            class="form-input mcp-auth-token-input" 
+            data-mcp-server="${server.id}"
+            value="${server.authToken || ''}"
+            placeholder="Bearer token for authentication"
+          >
+          <div class="form-hint">Authorization token sent with HTTP requests</div>
+        </div>
+      ` : `
+        <div class="form-group">
+          <label class="form-label">Command</label>
+          <input 
+            type="text" 
+            class="form-input mcp-command-input" 
+            data-mcp-server="${server.id}"
+            value="${server.command || ''}"
+            placeholder="npx -y @mcp/server"
+          >
+          <div class="form-hint">The command to start the MCP server process</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Arguments (comma-separated)</label>
+          <input 
+            type="text" 
+            class="form-input mcp-args-input" 
+            data-mcp-server="${server.id}"
+            value="${(server.args || []).join(', ')}"
+            placeholder="--port, 3000"
+          >
+        </div>
+      `}
+
+      ${server.lastError ? `
+        <div class="form-group">
+          <div class="error-message" style="padding: var(--space-3); background: rgba(239, 68, 68, 0.1); border-radius: var(--radius-md); color: var(--color-error); font-size: var(--text-sm);">
+            <strong>Last Error:</strong> ${server.lastError}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Tools Section -->
+      <div class="models-section" style="margin-top: var(--space-4);">
+        <div class="models-header">
+          <span class="models-title">Available Tools (${server.tools.length})</span>
+          ${isConnected ? `
+            <button class="btn-small refresh-tools-btn" data-mcp-server="${server.id}">
+              Refresh
+            </button>
+          ` : ''}
+        </div>
+        ${server.tools.length > 0 ? `
+          <div class="mcp-tools-list">
+            ${server.tools.map((tool: { name: string; description: string }) => `
+              <div class="mcp-tool-item">
+                <div class="mcp-tool-name">${tool.name}</div>
+                <div class="mcp-tool-description">${tool.description || 'No description'}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div style="padding: var(--space-4); text-align: center; color: var(--color-text-tertiary); font-size: var(--text-sm);">
+            ${isConnected ? 'No tools available from this server' : 'Connect to discover available tools'}
+          </div>
+        `}
+      </div>
+
+      <div class="details-actions">
+        ${isConnected ? `
+          <button class="test-btn disconnect-mcp-btn" data-mcp-server="${server.id}" style="background: var(--color-warning);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: var(--space-2);">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            Disconnect
+          </button>
+        ` : `
+          <button class="test-btn connect-mcp-btn" data-mcp-server="${server.id}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: var(--space-2);">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            Connect
+          </button>
+        `}
+        <button class="delete-provider-btn delete-mcp-btn" data-mcp-server="${server.id}" style="margin-left: auto;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: var(--space-2);">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Delete
+        </button>
+      </div>
+    `;
+  }
+
   private renderPresetsTab(): string {
     if (!this.settings) return '';
     return `
@@ -2152,6 +2428,7 @@ export class SettingsPanel extends HTMLElement {
     switch (this.activeTab) {
       case 'general': return this.renderGeneralTab();
       case 'providers': return this.renderProvidersTab();
+      case 'mcp': return this.renderMCPTab();
       case 'presets': return this.renderPresetsTab();
       case 'languages': return this.renderLanguagesTab();
       default: return this.renderGeneralTab();
@@ -2192,11 +2469,22 @@ export class SettingsPanel extends HTMLElement {
     });
 
     // Provider sidebar item selection
-    this.shadowRoot?.querySelectorAll('.sidebar-item').forEach(item => {
+    this.shadowRoot?.querySelectorAll('.sidebar-item[data-provider-id]').forEach(item => {
       item.addEventListener('click', () => {
         const providerId = item.getAttribute('data-provider-id');
         if (providerId && providerId !== this.selectedProviderId) {
           this.selectedProviderId = providerId;
+          this.render();
+        }
+      });
+    });
+
+    // MCP server sidebar item selection
+    this.shadowRoot?.querySelectorAll('.sidebar-item[data-mcp-server-id]').forEach(item => {
+      item.addEventListener('click', () => {
+        const serverId = item.getAttribute('data-mcp-server-id');
+        if (serverId && serverId !== this.selectedMcpServerId) {
+          this.selectedMcpServerId = serverId;
           this.render();
         }
       });
@@ -2214,6 +2502,111 @@ export class SettingsPanel extends HTMLElement {
 
     this.shadowRoot?.getElementById('confirm-add-provider')?.addEventListener('click', async () => {
       await this.handleAddProvider();
+    });
+
+    // Add MCP Server button
+    this.shadowRoot?.getElementById('add-mcp-server-btn')?.addEventListener('click', () => {
+      this.showAddMCPServerModal();
+    });
+
+    // Add MCP Server modal handlers
+    this.shadowRoot?.getElementById('cancel-add-mcp')?.addEventListener('click', () => {
+      this.hideAddMCPServerModal();
+    });
+
+    this.shadowRoot?.getElementById('confirm-add-mcp')?.addEventListener('click', async () => {
+      await this.handleAddMCPServer();
+    });
+
+    // MCP transport type change (show/hide relevant fields)
+    this.shadowRoot?.getElementById('new-mcp-transport')?.addEventListener('change', () => {
+      this.updateMCPTransportFields();
+    });
+
+    // Connect MCP server buttons
+    this.shadowRoot?.querySelectorAll('.connect-mcp-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const serverId = (e.currentTarget as HTMLButtonElement).dataset.mcpServer;
+        if (serverId) {
+          await this.handleConnectMCPServer(serverId);
+        }
+      });
+    });
+
+    // Disconnect MCP server buttons
+    this.shadowRoot?.querySelectorAll('.disconnect-mcp-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const serverId = (e.currentTarget as HTMLButtonElement).dataset.mcpServer;
+        if (serverId) {
+          await this.handleDisconnectMCPServer(serverId);
+        }
+      });
+    });
+
+    // Delete MCP server buttons
+    this.shadowRoot?.querySelectorAll('.delete-mcp-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const serverId = (e.currentTarget as HTMLButtonElement).dataset.mcpServer;
+        if (serverId && confirm('Are you sure you want to delete this MCP server?')) {
+          await this.handleDeleteMCPServer(serverId);
+        }
+      });
+    });
+
+    // Refresh tools buttons
+    this.shadowRoot?.querySelectorAll('.refresh-tools-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const serverId = (e.currentTarget as HTMLButtonElement).dataset.mcpServer;
+        if (serverId) {
+          await this.handleRefreshMCPTools(serverId);
+        }
+      });
+    });
+
+    // MCP endpoint updates
+    this.shadowRoot?.querySelectorAll('.mcp-endpoint-input').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const serverId = (e.target as HTMLInputElement).dataset.mcpServer;
+        const endpoint = (e.target as HTMLInputElement).value;
+        if (serverId) {
+          await mcpServerStorage.update(serverId, { endpoint });
+        }
+      });
+    });
+
+    // MCP auth token updates
+    this.shadowRoot?.querySelectorAll('.mcp-auth-token-input').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const serverId = (e.target as HTMLInputElement).dataset.mcpServer;
+        const authToken = (e.target as HTMLInputElement).value.trim() || undefined;
+        if (serverId) {
+          await mcpServerStorage.update(serverId, { authToken });
+        }
+      });
+    });
+
+    // MCP command updates
+    this.shadowRoot?.querySelectorAll('.mcp-command-input').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const serverId = (e.target as HTMLInputElement).dataset.mcpServer;
+        const command = (e.target as HTMLInputElement).value;
+        if (serverId) {
+          await mcpServerStorage.update(serverId, { command });
+        }
+      });
+    });
+
+    // MCP args updates
+    this.shadowRoot?.querySelectorAll('.mcp-args-input').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const serverId = (e.target as HTMLInputElement).dataset.mcpServer;
+        const argsString = (e.target as HTMLInputElement).value;
+        const args = argsString.split(',').map(a => a.trim()).filter(a => a);
+        if (serverId) {
+          await mcpServerStorage.update(serverId, { args });
+        }
+      });
     });
 
     // Add Model modal handlers
@@ -2822,6 +3215,151 @@ export class SettingsPanel extends HTMLElement {
     this.hideAddProviderModal();
     await this.loadData();
     this.render();
+  }
+
+  // ============================================
+  // MCP Server Modal Methods
+  // ============================================
+
+  private showAddMCPServerModal() {
+    const modal = this.shadowRoot?.getElementById('add-mcp-server-modal');
+    if (modal) {
+      modal.style.display = 'flex';
+      this.updateMCPTransportFields();
+    }
+  }
+
+  private hideAddMCPServerModal() {
+    const modal = this.shadowRoot?.getElementById('add-mcp-server-modal');
+    if (modal) {
+      modal.style.display = 'none';
+      // Clear inputs
+      (this.shadowRoot?.getElementById('new-mcp-name') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-mcp-endpoint') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-mcp-auth-token') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-mcp-command') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-mcp-args') as HTMLInputElement).value = '';
+    }
+  }
+
+  private updateMCPTransportFields() {
+    const transportSelect = this.shadowRoot?.getElementById('new-mcp-transport') as HTMLSelectElement;
+    const endpointGroup = this.shadowRoot?.getElementById('mcp-endpoint-group');
+    const authTokenGroup = this.shadowRoot?.getElementById('mcp-auth-token-group');
+    const commandGroup = this.shadowRoot?.getElementById('mcp-command-group');
+    const argsGroup = this.shadowRoot?.getElementById('mcp-args-group');
+    
+    if (transportSelect && endpointGroup && authTokenGroup && commandGroup && argsGroup) {
+      if (transportSelect.value === 'http') {
+        endpointGroup.style.display = 'block';
+        authTokenGroup.style.display = 'block';
+        commandGroup.style.display = 'none';
+        argsGroup.style.display = 'none';
+      } else {
+        endpointGroup.style.display = 'none';
+        authTokenGroup.style.display = 'none';
+        commandGroup.style.display = 'block';
+        argsGroup.style.display = 'block';
+      }
+    }
+  }
+
+  private async handleAddMCPServer() {
+    const name = (this.shadowRoot?.getElementById('new-mcp-name') as HTMLInputElement).value.trim();
+    const transport = (this.shadowRoot?.getElementById('new-mcp-transport') as HTMLSelectElement).value as MCPTransport;
+    
+    if (!name) {
+      alert('Please enter a server name');
+      return;
+    }
+
+    // Check if name already exists
+    if (await mcpServerStorage.nameExists(name)) {
+      alert('An MCP server with this name already exists');
+      return;
+    }
+
+    if (transport === 'http') {
+      const endpoint = (this.shadowRoot?.getElementById('new-mcp-endpoint') as HTMLInputElement).value.trim();
+      const authToken = (this.shadowRoot?.getElementById('new-mcp-auth-token') as HTMLInputElement).value.trim() || undefined;
+      if (!endpoint) {
+        alert('Please enter an endpoint URL');
+        return;
+      }
+      await mcpServerStorage.create({ name, transport, endpoint, authToken });
+    } else {
+      const command = (this.shadowRoot?.getElementById('new-mcp-command') as HTMLInputElement).value.trim();
+      const argsString = (this.shadowRoot?.getElementById('new-mcp-args') as HTMLInputElement).value.trim();
+      const args = argsString ? argsString.split(',').map(a => a.trim()).filter(a => a) : [];
+      
+      if (!command) {
+        alert('Please enter a command');
+        return;
+      }
+      await mcpServerStorage.create({ name, transport, command, args });
+    }
+
+    this.hideAddMCPServerModal();
+    await this.loadData();
+    this.selectedMcpServerId = this.mcpServers[this.mcpServers.length - 1]?.id || null;
+    this.render();
+  }
+
+  private async handleConnectMCPServer(serverId: string) {
+    const btn = this.shadowRoot?.querySelector(`.connect-mcp-btn[data-mcp-server="${serverId}"]`) as HTMLButtonElement;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Connecting...';
+    }
+
+    try {
+      await mcpRouter.connect(serverId);
+      await this.loadData();
+      this.render();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to connect: ${message}`);
+      await this.loadData();
+      this.render();
+    }
+  }
+
+  private async handleDisconnectMCPServer(serverId: string) {
+    try {
+      await mcpRouter.disconnect(serverId);
+      await this.loadData();
+      this.render();
+    } catch (error) {
+      console.error('Failed to disconnect:', error);
+    }
+  }
+
+  private async handleDeleteMCPServer(serverId: string) {
+    // Disconnect first if connected
+    if (mcpRouter.isConnected(serverId)) {
+      await mcpRouter.disconnect(serverId);
+    }
+    
+    await mcpServerStorage.delete(serverId);
+    await this.loadData();
+    
+    // Select another server if we deleted the selected one
+    if (this.selectedMcpServerId === serverId) {
+      this.selectedMcpServerId = this.mcpServers[0]?.id || null;
+    }
+    
+    this.render();
+  }
+
+  private async handleRefreshMCPTools(serverId: string) {
+    try {
+      await mcpRouter.refreshTools(serverId);
+      await this.loadData();
+      this.render();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to refresh tools: ${message}`);
+    }
   }
 
   private showAddModelModal(providerId: string) {

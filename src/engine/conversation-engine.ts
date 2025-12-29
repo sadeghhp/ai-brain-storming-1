@@ -917,6 +917,9 @@ export class ConversationEngine {
       conversationDepth?: ConversationDepth;
       // Target language for agent responses
       targetLanguage?: string;
+      // MCP (Model Context Protocol) settings
+      mcpServerIds?: string[];
+      mcpToolApprovalMode?: 'auto' | 'approval';
     } = {}
   ): Promise<ConversationEngine> {
     // Create conversation with strategy config and word limits
@@ -939,6 +942,9 @@ export class ConversationEngine {
       conversationDepth: options.conversationDepth,
       // Target language for agent responses
       targetLanguage: options.targetLanguage,
+      // MCP settings
+      mcpServerIds: options.mcpServerIds,
+      mcpToolApprovalMode: options.mcpToolApprovalMode ?? 'auto',
     });
 
     // Create agents

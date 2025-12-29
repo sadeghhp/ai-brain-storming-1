@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Database Layer (Dexie/IndexedDB)
-// Version: 2.2.0
+// Version: 2.3.0
 // ============================================
 
 import Dexie, { type Table } from 'dexie';
@@ -15,6 +15,8 @@ import type {
   ContextSnapshot,
   AgentPreset,
   LLMProvider,
+  MCPServer,
+  MCPToolCall,
   UserInterjection,
   UserReaction,
   AppSettings,
@@ -31,6 +33,8 @@ export class BrainstormDB extends Dexie {
   contextSnapshots!: Table<ContextSnapshot, string>;
   agentPresets!: Table<AgentPreset, string>;
   llmProviders!: Table<LLMProvider, string>;
+  mcpServers!: Table<MCPServer, string>;
+  mcpToolCalls!: Table<MCPToolCall, string>;
   userInterjections!: Table<UserInterjection, string>;
   userReactions!: Table<UserReaction, string>;
   appSettings!: Table<AppSettings, string>;
@@ -144,11 +148,32 @@ export class BrainstormDB extends Dexie {
       userReactions: 'id, messageId',
       appSettings: 'id',
     });
+
+    // Version 6: Add MCP (Model Context Protocol) support
+    // - mcpServers: Store MCP server configurations
+    // - mcpToolCalls: Track tool calls made by agents
+    this.version(6).stores({
+      conversations: 'id, status, createdAt, updatedAt',
+      turns: 'id, conversationId, agentId, [conversationId+round], [conversationId+round+sequence], state',
+      agents: 'id, conversationId, [conversationId+order], isSecretary',
+      messages: 'id, conversationId, turnId, agentId, [conversationId+round], createdAt, type',
+      notebooks: 'agentId',
+      resultDrafts: 'conversationId',
+      distilledMemories: 'conversationId, lastDistilledRound',
+      contextSnapshots: 'turnId, conversationId',
+      agentPresets: 'id, category, isBuiltIn, name',
+      llmProviders: 'id, apiFormat, isActive',
+      mcpServers: 'id, transport, isActive',           // MCP server configurations
+      mcpToolCalls: 'id, conversationId, turnId, [conversationId+status], status, createdAt', // Tool call tracking
+      userInterjections: 'id, conversationId, [conversationId+afterRound], processed, [conversationId+processed]',
+      userReactions: 'id, messageId',
+      appSettings: 'id',
+    });
   }
 }
 
 // Singleton instance
-export const db = new BrainstormDB();
+export const db: BrainstormDB = new BrainstormDB();
 
 // Initialize default settings if not exists
 export async function initializeDatabase(): Promise<void> {
@@ -216,7 +241,8 @@ export async function checkDatabaseHealth(): Promise<boolean> {
 export async function clearAllData(): Promise<void> {
   await db.transaction('rw', db.tables, async () => {
     for (const table of db.tables) {
-      if (table.name !== 'appSettings' && table.name !== 'llmProviders' && table.name !== 'agentPresets') {
+      // Preserve settings, providers, presets, and MCP servers
+      if (table.name !== 'appSettings' && table.name !== 'llmProviders' && table.name !== 'agentPresets' && table.name !== 'mcpServers') {
         await table.clear();
       }
     }

@@ -11,6 +11,12 @@ import { llmRouter } from '../llm/llm-router';
 const PROMPTS_DB_NAME = 'PromptTemplatesDB';
 const PROMPTS_STORE_NAME = 'templates';
 
+// Bundled prompt packs shipped with the app (always available, no IndexedDB needed)
+const BUNDLED_PROMPTS: Record<string, PromptTemplates> = {
+  '': englishPrompts as PromptTemplates,
+  Persian: persianPrompts as PromptTemplates,
+};
+
 /**
  * Translation progress event
  */
@@ -35,11 +41,10 @@ class LanguageServiceImpl {
   private dbReady: Promise<void>;
 
   constructor() {
-    // Initialize English prompts in cache
-    this.cache.set('', englishPrompts as PromptTemplates);
-    
-    // Initialize Persian prompts in cache (bundled)
-    this.cache.set('Persian', persianPrompts as PromptTemplates);
+    // Initialize bundled prompts in cache
+    for (const [code, prompts] of Object.entries(BUNDLED_PROMPTS)) {
+      this.cache.set(code, prompts);
+    }
     
     // Initialize IndexedDB for other languages
     this.dbReady = this.initDB();
@@ -76,7 +81,7 @@ class LanguageServiceImpl {
    * Get English prompts (master/base language)
    */
   getEnglishPrompts(): PromptTemplates {
-    return englishPrompts as PromptTemplates;
+    return BUNDLED_PROMPTS[''];
   }
 
   /**
@@ -85,10 +90,9 @@ class LanguageServiceImpl {
    * Use this for synchronous code paths, but ensure language is pre-loaded
    */
   getPromptsSync(languageCode: LanguageCode | string): PromptTemplates {
-    // English (empty code) - return bundled prompts
-    if (!languageCode || languageCode === '') {
-      return this.getEnglishPrompts();
-    }
+    // Bundled languages (always available)
+    if (!languageCode) return this.getEnglishPrompts();
+    if (languageCode in BUNDLED_PROMPTS) return BUNDLED_PROMPTS[languageCode];
 
     // Check cache
     if (this.cache.has(languageCode)) {
@@ -105,9 +109,9 @@ class LanguageServiceImpl {
    * Call this before using getPromptsSync to ensure language is available
    */
   async preloadLanguage(languageCode: LanguageCode | string): Promise<boolean> {
-    if (!languageCode || languageCode === '') {
-      return true; // English always available
-    }
+    // Bundled languages are always available
+    if (!languageCode) return true;
+    if (languageCode in BUNDLED_PROMPTS) return true;
 
     if (this.cache.has(languageCode)) {
       return true;
@@ -129,10 +133,9 @@ class LanguageServiceImpl {
    * Returns English if language not available
    */
   async getPrompts(languageCode: LanguageCode | string): Promise<PromptTemplates> {
-    // English (empty code) - return bundled prompts
-    if (!languageCode || languageCode === '') {
-      return this.getEnglishPrompts();
-    }
+    // Bundled languages (always available)
+    if (!languageCode) return this.getEnglishPrompts();
+    if (languageCode in BUNDLED_PROMPTS) return BUNDLED_PROMPTS[languageCode];
 
     // Check cache first
     if (this.cache.has(languageCode)) {
@@ -157,10 +160,9 @@ class LanguageServiceImpl {
    * Check if a language is available (has translated prompts)
    */
   async isLanguageAvailable(languageCode: LanguageCode | string): Promise<boolean> {
-    // English is always available
-    if (!languageCode || languageCode === '') {
-      return true;
-    }
+    // Bundled languages are always available
+    if (!languageCode) return true;
+    if (languageCode in BUNDLED_PROMPTS) return true;
 
     // Check cache
     if (this.cache.has(languageCode)) {
@@ -693,8 +695,9 @@ Only output the translated text, nothing else.`,
     onProgress(90);
     
     // Translate finishing phase prompts if they exist
-    const finishingPhase = context.finishingPhase 
-      ? await this.translateStringRecord(context.finishingPhase, targetLanguage, providerId, modelId)
+    const finishingPhaseSource = (context as any).finishingPhase as unknown;
+    const finishingPhase = finishingPhaseSource
+      ? await this.translateStringRecord(finishingPhaseSource as any, targetLanguage, providerId, modelId)
       : undefined;
     onProgress(100);
     

@@ -1,10 +1,10 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.11.0
+// Version: 2.12.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
-import { presetStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
+import { presetStorage, providerStorage, settingsStorage, mcpServerStorage } from '../storage/storage-manager';
 import { presetCategories } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
@@ -13,7 +13,7 @@ import { startingStrategies, getStrategyById, buildOpeningStatement, buildGround
 import { conversationTemplates, templateCategories, getTemplateById } from '../strategies/conversation-templates';
 import { getEnabledLanguages, type Language } from '../utils/languages';
 import { languageService, type TranslationProgress } from '../prompts/language-service';
-import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId, ConversationDepth, AppSettings } from '../types';
+import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId, ConversationDepth, AppSettings, MCPServer, ToolApprovalMode } from '../types';
 import './agent-editor-modal';
 import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
 
@@ -80,6 +80,10 @@ export class NewConversationModal extends HTMLElement {
   private hiddenCategories: Set<string> = new Set();
   private hiddenPresets: Set<string> = new Set();
   private settingsUpdateToken = 0;
+  // MCP server state
+  private mcpServers: MCPServer[] = [];
+  private selectedMcpServerIds: Set<string> = new Set();
+  private mcpToolApprovalMode: ToolApprovalMode = 'auto';
 
   private elId(suffix: string): string {
     return `${this.uid}-${suffix}`;
@@ -155,6 +159,7 @@ export class NewConversationModal extends HTMLElement {
   private async loadData() {
     const allPresets = await presetStorage.getAll();
     this.providers = await providerStorage.getAll();
+    this.mcpServers = await mcpServerStorage.getAll();
     
     // Load settings for languages and hidden presets/categories
     const settings = await settingsStorage.get();
@@ -579,6 +584,115 @@ export class NewConversationModal extends HTMLElement {
           border: 1px solid var(--color-border);
           border-radius: var(--radius-md);
           scroll-behavior: smooth;
+        }
+
+        /* MCP Server Selection */
+        .mcp-server-list {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-2);
+          padding: var(--space-2);
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          max-height: 150px;
+          overflow-y: auto;
+        }
+
+        .mcp-server-item {
+          display: flex;
+          align-items: center;
+          gap: var(--space-3);
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-bg-primary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .mcp-server-item:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .mcp-server-item:has(input:checked) {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+        }
+
+        .mcp-server-item input[type="checkbox"] {
+          width: 16px;
+          height: 16px;
+          accent-color: var(--color-primary);
+        }
+
+        .mcp-server-info {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+        }
+
+        .mcp-server-name {
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-primary);
+        }
+
+        .mcp-server-tools {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+        }
+
+        /* Tool Approval Mode Toggle */
+        .approval-mode-toggle {
+          display: flex;
+          gap: var(--space-3);
+        }
+
+        .approval-option {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          gap: var(--space-3);
+          padding: var(--space-3);
+          background: var(--color-surface);
+          border: 2px solid var(--color-border);
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .approval-option:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .approval-option.selected {
+          border-color: var(--color-primary);
+          background: var(--color-primary-dim);
+        }
+
+        .approval-option input {
+          display: none;
+        }
+
+        .approval-icon {
+          font-size: 20px;
+        }
+
+        .approval-info {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .approval-name {
+          font-weight: var(--font-medium);
+          font-size: var(--text-sm);
+          color: var(--color-text-primary);
+        }
+
+        .approval-desc {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
         }
 
         .preset-chip {
@@ -1474,6 +1588,57 @@ export class NewConversationModal extends HTMLElement {
                 </div>
               </div>
 
+              ${this.mcpServers.length > 0 ? `
+              <!-- MCP Servers -->
+              <div class="form-group">
+                <label class="form-label">MCP Tools (Optional)</label>
+                <div class="mcp-server-list">
+                  ${this.mcpServers.map(server => `
+                    <label class="mcp-server-item">
+                      <input type="checkbox" 
+                        class="mcp-server-checkbox" 
+                        data-server-id="${server.id}"
+                        ${this.selectedMcpServerIds.has(server.id) ? 'checked' : ''}
+                      >
+                      <span class="mcp-server-info">
+                        <span class="mcp-server-name">${server.name}</span>
+                        <span class="mcp-server-tools">${server.tools.length} tools</span>
+                      </span>
+                    </label>
+                  `).join('')}
+                </div>
+                <div class="form-hint" style="margin-top: var(--space-2); font-size: var(--text-xs); color: var(--color-text-tertiary);">
+                  Select MCP servers to provide tools agents can use during the conversation
+                </div>
+              </div>
+
+              ${this.selectedMcpServerIds.size > 0 ? `
+              <div class="form-group">
+                <label class="form-label">Tool Approval Mode</label>
+                <div class="approval-mode-toggle">
+                  <label class="approval-option ${this.mcpToolApprovalMode === 'auto' ? 'selected' : ''}">
+                    <input type="radio" name="approval-mode" value="auto" 
+                      ${this.mcpToolApprovalMode === 'auto' ? 'checked' : ''}>
+                    <span class="approval-icon">⚡</span>
+                    <span class="approval-info">
+                      <span class="approval-name">Automatic</span>
+                      <span class="approval-desc">Agents can use tools freely</span>
+                    </span>
+                  </label>
+                  <label class="approval-option ${this.mcpToolApprovalMode === 'approval' ? 'selected' : ''}">
+                    <input type="radio" name="approval-mode" value="approval"
+                      ${this.mcpToolApprovalMode === 'approval' ? 'checked' : ''}>
+                    <span class="approval-icon">✋</span>
+                    <span class="approval-info">
+                      <span class="approval-name">With Approval</span>
+                      <span class="approval-desc">You approve each tool call</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+              ` : ''}
+              ` : ''}
+
               <div class="section-divider"></div>
 
               <!-- Agent Mode Toggle -->
@@ -1789,6 +1954,32 @@ export class NewConversationModal extends HTMLElement {
           this.renderTranslationModal();
         }
       }
+    });
+
+    // MCP server checkboxes
+    this.shadowRoot?.querySelectorAll('.mcp-server-checkbox').forEach(checkbox => {
+      checkbox.addEventListener('change', (e) => {
+        const serverId = (e.target as HTMLInputElement).dataset.serverId;
+        if (serverId) {
+          if ((e.target as HTMLInputElement).checked) {
+            this.selectedMcpServerIds.add(serverId);
+          } else {
+            this.selectedMcpServerIds.delete(serverId);
+          }
+          // Re-render to show/hide approval mode section
+          this.render();
+        }
+      });
+    });
+
+    // MCP approval mode radio buttons
+    this.shadowRoot?.querySelectorAll('input[name="approval-mode"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        const mode = (e.target as HTMLInputElement).value as ToolApprovalMode;
+        this.mcpToolApprovalMode = mode;
+        this.shadowRoot?.querySelectorAll('.approval-option').forEach(o => o.classList.remove('selected'));
+        (e.target as HTMLInputElement).closest('.approval-option')?.classList.add('selected');
+      });
     });
 
     // Strategy selector
@@ -2309,6 +2500,8 @@ export class NewConversationModal extends HTMLElement {
           groundRules,
           conversationDepth: this.selectedDepth,
           targetLanguage: this.selectedLanguage || undefined,
+          mcpServerIds: this.selectedMcpServerIds.size > 0 ? Array.from(this.selectedMcpServerIds) : undefined,
+          mcpToolApprovalMode: this.selectedMcpServerIds.size > 0 ? this.mcpToolApprovalMode : undefined,
         }
       );
 

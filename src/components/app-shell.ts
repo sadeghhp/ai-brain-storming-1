@@ -1,10 +1,11 @@
 // ============================================
 // AI Brainstorm - App Shell Component
-// Version: 1.0.0
+// Version: 1.1.0
 // ============================================
 
 import { initializeDatabase } from '../storage/db';
 import { llmRouter } from '../llm/llm-router';
+import { mcpRouter } from '../mcp';
 import { initializePresets } from '../agents/presets';
 import { settingsStorage } from '../storage/storage-manager';
 import { eventBus } from '../utils/event-bus';
@@ -13,6 +14,7 @@ import './conversation-view';
 import './settings-panel';
 import './new-conversation-modal';
 import './conversation-settings-modal';
+import './tool-approval-modal';
 
 /**
  * App Shell - Main application container
@@ -38,6 +40,9 @@ export class AppShell extends HTMLElement {
       
       // Initialize LLM router
       await llmRouter.initialize();
+      
+      // Initialize MCP router
+      await mcpRouter.initialize();
       
       // Initialize presets
       await initializePresets();

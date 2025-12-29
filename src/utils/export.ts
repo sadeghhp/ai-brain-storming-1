@@ -285,8 +285,19 @@ export async function downloadPresets(): Promise<void> {
  * Export selected presets by IDs
  */
 export async function exportSelectedPresets(presetIds: string[]): Promise<string> {
-  const allPresets = await presetStorage.getCustom();
-  const selected = allPresets.filter(p => presetIds.includes(p.id));
+  if (!Array.isArray(presetIds) || presetIds.length === 0) {
+    throw new Error('No preset IDs provided');
+  }
+
+  // Fetch by ID to avoid relying on boolean/index representations in historical data.
+  const fetched = await Promise.all(presetIds.map(id => presetStorage.getById(id)));
+  
+  // Robust check: treat as built-in only if isBuiltIn is explicitly truthy (true, 1, "1")
+  const selected = fetched.filter((p): p is AgentPreset => {
+    if (!p) return false;
+    const isBuiltIn = (p as any).isBuiltIn;
+    return isBuiltIn !== true && isBuiltIn !== 1 && isBuiltIn !== '1';
+  });
 
   if (selected.length === 0) {
     throw new Error('No valid custom presets found for the selected IDs');
