@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Type Definitions
-// Version: 1.11.0
+// Version: 1.12.0
 // ============================================
 
 // ----- Enums -----
@@ -13,7 +13,7 @@ export type MessageType = 'response' | 'summary' | 'interjection' | 'system' | '
 export type ApiFormat = 'openai' | 'anthropic' | 'ollama';
 
 // MCP (Model Context Protocol) types
-export type MCPTransport = 'http' | 'stdio';
+export type MCPTransport = 'http' | 'streamable-http' | 'stdio';
 export type ToolApprovalMode = 'auto' | 'approval';
 export type MCPToolCallStatus = 'pending' | 'approved' | 'denied' | 'executed' | 'failed';
 
@@ -258,9 +258,11 @@ export interface MCPServer {
   id: string;
   name: string;
   transport: MCPTransport;
-  // HTTP/SSE transport configuration
+  // HTTP/SSE and Streamable HTTP transport configuration
   endpoint?: string;
-  authToken?: string;         // Bearer token for HTTP authentication
+  authToken?: string;                    // Bearer token for HTTP authentication (convenience)
+  headers?: Record<string, string>;      // Custom headers for HTTP requests
+  useDevProxy?: boolean;                 // Use Vite dev proxy to bypass CORS (dev only)
   // Stdio transport configuration
   command?: string;
   args?: string[];
@@ -289,6 +291,21 @@ export interface MCPToolCall {
   createdAt: number;
   executedAt?: number;
 }
+
+/**
+ * MCPServerExport - Export format for MCP server configurations
+ * Used for backup/restore and sharing MCP server settings
+ */
+export interface MCPServerExport {
+  version: string;
+  exportedAt: string;
+  servers: Omit<MCPServer, 'id' | 'isActive' | 'tools' | 'lastConnectedAt' | 'lastError'>[];
+}
+
+/**
+ * Conflict resolution strategy for importing MCP servers
+ */
+export type MCPImportConflictStrategy = 'skip' | 'rename' | 'replace';
 
 export interface UserInterjection {
   id: string;

@@ -1,11 +1,11 @@
 // ============================================
 // AI Brainstorm - Export Utilities
-// Version: 1.2.0
+// Version: 1.3.0
 // ============================================
 
-import { conversationStorage, messageStorage, agentStorage, resultDraftStorage, presetStorage } from '../storage/storage-manager';
+import { conversationStorage, messageStorage, agentStorage, resultDraftStorage, presetStorage, mcpServerStorage } from '../storage/storage-manager';
 import { downloadAsFile } from './helpers';
-import type { Conversation, Message, Agent, ResultDraft, AgentPreset } from '../types';
+import type { Conversation, Message, Agent, ResultDraft, AgentPreset, MCPServer, MCPServerExport, MCPImportConflictStrategy } from '../types';
 
 export interface ConversationExport {
   version: string;
@@ -328,6 +328,157 @@ export async function downloadSelectedPresets(presetIds: string[]): Promise<void
   } else {
     // Multiple presets: use count
     filename = `ai-brainstorm-presets-${data.presets.length}.json`;
+  }
+  
+  downloadAsFile(content, filename, 'application/json');
+}
+
+// ============================================
+// MCP Server Export/Import
+// ============================================
+
+/**
+ * Prepare MCP server for export (strip runtime fields)
+ */
+function prepareServerForExport(server: MCPServer): Omit<MCPServer, 'id' | 'isActive' | 'tools' | 'lastConnectedAt' | 'lastError'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id, isActive, tools, lastConnectedAt, lastError, ...exportable } = server;
+  return exportable;
+}
+
+/**
+ * Export all MCP servers to JSON string
+ */
+export async function exportMCPServers(): Promise<string> {
+  const servers = await mcpServerStorage.getAll();
+
+  const exportData: MCPServerExport = {
+    version: '1.0.0',
+    exportedAt: new Date().toISOString(),
+    servers: servers.map(prepareServerForExport),
+  };
+
+  return JSON.stringify(exportData, null, 2);
+}
+
+/**
+ * Export selected MCP servers by IDs
+ */
+export async function exportSelectedMCPServers(serverIds: string[]): Promise<string> {
+  if (!Array.isArray(serverIds) || serverIds.length === 0) {
+    throw new Error('No server IDs provided');
+  }
+
+  const servers = await mcpServerStorage.getByIds(serverIds);
+
+  if (servers.length === 0) {
+    throw new Error('No MCP servers found for the selected IDs');
+  }
+
+  const exportData: MCPServerExport = {
+    version: '1.0.0',
+    exportedAt: new Date().toISOString(),
+    servers: servers.map(prepareServerForExport),
+  };
+
+  return JSON.stringify(exportData, null, 2);
+}
+
+/**
+ * Import MCP servers from JSON with conflict handling
+ * @param jsonContent - JSON string with MCPServerExport format
+ * @param conflictStrategy - How to handle duplicate server names: 'skip', 'rename', or 'replace'
+ * @returns Object with imported count and skipped count
+ */
+export async function importMCPServers(
+  jsonContent: string,
+  conflictStrategy: MCPImportConflictStrategy = 'skip'
+): Promise<{ imported: number; skipped: number; replaced: number }> {
+  const data = JSON.parse(jsonContent) as MCPServerExport;
+
+  if (!data.servers || !Array.isArray(data.servers)) {
+    throw new Error('Invalid MCP server export format');
+  }
+
+  // Get existing servers to check for name conflicts
+  const existingServers = await mcpServerStorage.getAll();
+  const existingNames = new Map(existingServers.map(s => [s.name.toLowerCase(), s]));
+
+  let imported = 0;
+  let skipped = 0;
+  let replaced = 0;
+
+  for (const serverData of data.servers) {
+    const nameLower = serverData.name.toLowerCase();
+    const existingServer = existingNames.get(nameLower);
+
+    if (existingServer) {
+      // Name conflict - handle based on strategy
+      switch (conflictStrategy) {
+        case 'skip':
+          skipped++;
+          continue;
+
+        case 'rename': {
+          // Find a unique name by appending a number
+          let newName = serverData.name;
+          let counter = 1;
+          while (existingNames.has(newName.toLowerCase())) {
+            newName = `${serverData.name} (${counter})`;
+            counter++;
+          }
+          await mcpServerStorage.create({
+            ...serverData,
+            name: newName,
+          });
+          // Update map to prevent future conflicts in this import batch
+          existingNames.set(newName.toLowerCase(), { id: '', ...serverData, name: newName, isActive: false, tools: [] } as MCPServer);
+          imported++;
+          break;
+        }
+
+        case 'replace':
+          // Delete existing and create new
+          await mcpServerStorage.delete(existingServer.id);
+          await mcpServerStorage.create(serverData);
+          replaced++;
+          break;
+      }
+    } else {
+      // No conflict - create new server
+      const newServer = await mcpServerStorage.create(serverData);
+      existingNames.set(nameLower, newServer);
+      imported++;
+    }
+  }
+
+  return { imported, skipped, replaced };
+}
+
+/**
+ * Download all MCP servers as file
+ */
+export async function downloadMCPServers(): Promise<void> {
+  const content = await exportMCPServers();
+  downloadAsFile(content, 'ai-brainstorm-mcp-servers.json', 'application/json');
+}
+
+/**
+ * Download selected MCP servers as file
+ */
+export async function downloadSelectedMCPServers(serverIds: string[]): Promise<void> {
+  const content = await exportSelectedMCPServers(serverIds);
+  const data = JSON.parse(content) as MCPServerExport;
+  
+  // Generate filename based on selection
+  let filename: string;
+  if (data.servers.length === 1) {
+    // Single server: use server name
+    const safeName = data.servers[0].name.slice(0, 30).replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    filename = `mcp-server-${safeName}.json`;
+  } else {
+    // Multiple servers: use count
+    filename = `ai-brainstorm-mcp-servers-${data.servers.length}.json`;
   }
   
   downloadAsFile(content, filename, 'application/json');

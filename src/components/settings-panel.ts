@@ -1,6 +1,6 @@
 // ============================================
 // AI Brainstorm - Settings Panel Component
-// Version: 3.1.0
+// Version: 3.2.0
 // ============================================
 
 import { settingsStorage, providerStorage, presetStorage, mcpServerStorage } from '../storage/storage-manager';
@@ -10,9 +10,9 @@ import { mcpRouter } from '../mcp';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
 import { ALL_LANGUAGES } from '../utils/languages';
-import { downloadPresets, importPresets, downloadSelectedPresets } from '../utils/export';
+import { downloadPresets, importPresets, downloadSelectedPresets, downloadMCPServers, importMCPServers } from '../utils/export';
 import { readFileContent } from '../utils/helpers';
-import type { AppSettings, LLMProvider, ApiFormat, AgentPreset, MCPServer, MCPTransport } from '../types';
+import type { AppSettings, LLMProvider, ApiFormat, AgentPreset, MCPServer, MCPTransport, MCPImportConflictStrategy } from '../types';
 import './agent-preset-editor-modal';
 import type { AgentPresetEditorModal } from './agent-preset-editor-modal';
 
@@ -1641,7 +1641,8 @@ export class SettingsPanel extends HTMLElement {
           <div class="form-group">
             <label class="form-label">Transport Type</label>
             <select class="form-select" id="new-mcp-transport">
-              <option value="http">HTTP/SSE (Remote)</option>
+              <option value="streamable-http">Streamable HTTP (Recommended)</option>
+              <option value="http">HTTP/SSE</option>
               <option value="stdio">Stdio (Local Process)</option>
             </select>
           </div>
@@ -1653,7 +1654,19 @@ export class SettingsPanel extends HTMLElement {
           <div class="form-group" id="mcp-auth-token-group">
             <label class="form-label">Auth Token (Optional)</label>
             <input type="password" class="form-input" id="new-mcp-auth-token" placeholder="Bearer token for authentication">
-            <div class="form-hint">Authorization token sent with HTTP requests</div>
+            <div class="form-hint">Authorization token sent with HTTP requests (or use Headers below)</div>
+          </div>
+          <div class="form-group" id="mcp-headers-group">
+            <label class="form-label">Custom Headers (Optional)</label>
+            <textarea class="form-input" id="new-mcp-headers" rows="3" placeholder='{"Authorization": "Bearer token", "X-Custom": "value"}'></textarea>
+            <div class="form-hint">JSON object of custom headers to send with requests</div>
+          </div>
+          <div class="form-group" id="mcp-proxy-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="new-mcp-use-proxy" checked>
+              <span>Use Dev Proxy (bypass CORS)</span>
+            </label>
+            <div class="form-hint">Routes requests through localhost to avoid CORS issues during development</div>
           </div>
           <div class="form-group" id="mcp-command-group" style="display: none;">
             <label class="form-label">Command</label>
@@ -1667,6 +1680,37 @@ export class SettingsPanel extends HTMLElement {
           <div class="modal-actions">
             <button class="modal-btn cancel" id="cancel-add-mcp">Cancel</button>
             <button class="modal-btn primary" id="confirm-add-mcp">Add Server</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MCP Import Conflict Modal -->
+      <div class="modal-overlay" id="mcp-import-conflict-modal" style="display: none;">
+        <div class="modal">
+          <h3>Import MCP Servers</h3>
+          <div id="mcp-import-conflict-message" style="margin-bottom: var(--space-4); color: var(--color-text-secondary);">
+            <!-- Dynamic content will be inserted here -->
+          </div>
+          <div class="form-group">
+            <label class="form-label">Handle Name Conflicts</label>
+            <div style="display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2);">
+              <label class="radio-option" style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+                <input type="radio" name="mcp-conflict-strategy" value="skip" checked style="accent-color: var(--color-accent);">
+                <span><strong>Skip</strong> - Don't import servers with duplicate names</span>
+              </label>
+              <label class="radio-option" style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+                <input type="radio" name="mcp-conflict-strategy" value="rename" style="accent-color: var(--color-accent);">
+                <span><strong>Rename</strong> - Add number suffix to duplicate names</span>
+              </label>
+              <label class="radio-option" style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+                <input type="radio" name="mcp-conflict-strategy" value="replace" style="accent-color: var(--color-accent);">
+                <span><strong>Replace</strong> - Overwrite existing servers with same name</span>
+              </label>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="modal-btn cancel" id="cancel-mcp-import">Cancel</button>
+            <button class="modal-btn primary" id="confirm-mcp-import">Import</button>
           </div>
         </div>
       </div>
@@ -2086,7 +2130,26 @@ export class SettingsPanel extends HTMLElement {
             `).join('')}
           </div>
           <div class="split-sidebar-footer">
-            <button class="add-provider-btn" id="add-mcp-server-btn" style="margin-bottom: 0;">+ Add MCP Server</button>
+            <button class="add-provider-btn" id="add-mcp-server-btn" style="margin-bottom: var(--space-2);">+ Add MCP Server</button>
+            <div class="mcp-export-import-buttons" style="display: flex; gap: var(--space-2);">
+              <button class="secondary-btn" id="export-mcp-servers-btn" style="flex: 1; font-size: var(--text-sm); padding: var(--space-1) var(--space-2);" ${this.mcpServers.length === 0 ? 'disabled' : ''}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; margin-right: 4px;">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Export
+              </button>
+              <button class="secondary-btn" id="import-mcp-servers-btn" style="flex: 1; font-size: var(--text-sm); padding: var(--space-1) var(--space-2);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; margin-right: 4px;">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Import
+              </button>
+            </div>
+            <input type="file" id="import-mcp-file-input" accept=".json" style="display: none;">
           </div>
         </div>
 
@@ -2113,12 +2176,18 @@ export class SettingsPanel extends HTMLElement {
   private renderMCPServerDetails(server: MCPServer): string {
     const isConnected = mcpRouter.isConnected(server.id);
     
+    const transportLabel = server.transport === 'streamable-http' 
+      ? 'Streamable HTTP Transport' 
+      : server.transport === 'http' 
+        ? 'HTTP/SSE Transport' 
+        : 'Stdio Transport';
+    
     return `
       <div class="details-header">
         <div>
           <div class="details-title">${server.name}</div>
           <div style="font-size: var(--text-sm); color: var(--color-text-tertiary); margin-top: var(--space-1);">
-            ${server.transport === 'http' ? 'HTTP/SSE Transport' : 'Stdio Transport'}
+            ${transportLabel}
           </div>
         </div>
         <div class="details-status">
@@ -2127,7 +2196,7 @@ export class SettingsPanel extends HTMLElement {
         </div>
       </div>
 
-      ${server.transport === 'http' ? `
+      ${server.transport === 'http' || server.transport === 'streamable-http' ? `
         <div class="form-group">
           <label class="form-label">Endpoint URL</label>
           <input 
@@ -2137,7 +2206,7 @@ export class SettingsPanel extends HTMLElement {
             value="${server.endpoint || ''}"
             placeholder="http://localhost:3000/mcp"
           >
-          <div class="form-hint">The HTTP endpoint for the MCP server (supports SSE)</div>
+          <div class="form-hint">The HTTP endpoint for the MCP server</div>
         </div>
         <div class="form-group">
           <label class="form-label">Auth Token (Optional)</label>
@@ -2148,7 +2217,29 @@ export class SettingsPanel extends HTMLElement {
             value="${server.authToken || ''}"
             placeholder="Bearer token for authentication"
           >
-          <div class="form-hint">Authorization token sent with HTTP requests</div>
+          <div class="form-hint">Authorization token (or use custom headers below)</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Custom Headers (Optional)</label>
+          <textarea 
+            class="form-input mcp-headers-input" 
+            data-mcp-server="${server.id}"
+            rows="3"
+            placeholder='{"Authorization": "Bearer token", "X-Custom": "value"}'
+          >${server.headers ? JSON.stringify(server.headers, null, 2) : ''}</textarea>
+          <div class="form-hint">JSON object of custom headers to send with requests</div>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input 
+              type="checkbox" 
+              class="mcp-proxy-input" 
+              data-mcp-server="${server.id}"
+              ${server.useDevProxy ? 'checked' : ''}
+            >
+            <span>Use Dev Proxy (bypass CORS)</span>
+          </label>
+          <div class="form-hint">Routes requests through localhost to avoid CORS issues during development</div>
         </div>
       ` : `
         <div class="form-group">
@@ -2509,6 +2600,35 @@ export class SettingsPanel extends HTMLElement {
       this.showAddMCPServerModal();
     });
 
+    // Export MCP Servers button
+    this.shadowRoot?.getElementById('export-mcp-servers-btn')?.addEventListener('click', async () => {
+      await this.handleExportMCPServers();
+    });
+
+    // Import MCP Servers button
+    this.shadowRoot?.getElementById('import-mcp-servers-btn')?.addEventListener('click', () => {
+      this.shadowRoot?.getElementById('import-mcp-file-input')?.click();
+    });
+
+    // Import MCP file input change
+    this.shadowRoot?.getElementById('import-mcp-file-input')?.addEventListener('change', async (e) => {
+      const input = e.target as HTMLInputElement;
+      const file = input.files?.[0];
+      if (file) {
+        await this.handleImportMCPFile(file);
+        input.value = ''; // Reset for next import
+      }
+    });
+
+    // Import conflict modal handlers
+    this.shadowRoot?.getElementById('cancel-mcp-import')?.addEventListener('click', () => {
+      this.hideMCPImportConflictModal();
+    });
+
+    this.shadowRoot?.getElementById('confirm-mcp-import')?.addEventListener('click', async () => {
+      await this.handleConfirmMCPImport();
+    });
+
     // Add MCP Server modal handlers
     this.shadowRoot?.getElementById('cancel-add-mcp')?.addEventListener('click', () => {
       this.hideAddMCPServerModal();
@@ -2582,6 +2702,41 @@ export class SettingsPanel extends HTMLElement {
         const authToken = (e.target as HTMLInputElement).value.trim() || undefined;
         if (serverId) {
           await mcpServerStorage.update(serverId, { authToken });
+        }
+      });
+    });
+
+    // MCP headers updates
+    this.shadowRoot?.querySelectorAll('.mcp-headers-input').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const serverId = (e.target as HTMLTextAreaElement).dataset.mcpServer;
+        const headersStr = (e.target as HTMLTextAreaElement).value.trim();
+        if (serverId) {
+          let headers: Record<string, string> | undefined;
+          if (headersStr) {
+            try {
+              headers = JSON.parse(headersStr);
+              if (typeof headers !== 'object' || Array.isArray(headers)) {
+                alert('Headers must be a JSON object');
+                return;
+              }
+            } catch {
+              alert('Invalid JSON format for headers');
+              return;
+            }
+          }
+          await mcpServerStorage.update(serverId, { headers });
+        }
+      });
+    });
+
+    // MCP proxy checkbox updates
+    this.shadowRoot?.querySelectorAll('.mcp-proxy-input').forEach(input => {
+      input.addEventListener('change', async (e) => {
+        const serverId = (e.target as HTMLInputElement).dataset.mcpServer;
+        const useDevProxy = (e.target as HTMLInputElement).checked;
+        if (serverId) {
+          await mcpServerStorage.update(serverId, { useDevProxy });
         }
       });
     });
@@ -3235,10 +3390,15 @@ export class SettingsPanel extends HTMLElement {
       modal.style.display = 'none';
       // Clear inputs
       (this.shadowRoot?.getElementById('new-mcp-name') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-mcp-transport') as HTMLSelectElement).value = 'streamable-http';
       (this.shadowRoot?.getElementById('new-mcp-endpoint') as HTMLInputElement).value = '';
       (this.shadowRoot?.getElementById('new-mcp-auth-token') as HTMLInputElement).value = '';
+      (this.shadowRoot?.getElementById('new-mcp-headers') as HTMLTextAreaElement).value = '';
+      (this.shadowRoot?.getElementById('new-mcp-use-proxy') as HTMLInputElement).checked = true; // Default to true for dev
       (this.shadowRoot?.getElementById('new-mcp-command') as HTMLInputElement).value = '';
       (this.shadowRoot?.getElementById('new-mcp-args') as HTMLInputElement).value = '';
+      // Reset field visibility
+      this.updateMCPTransportFields();
     }
   }
 
@@ -3246,18 +3406,25 @@ export class SettingsPanel extends HTMLElement {
     const transportSelect = this.shadowRoot?.getElementById('new-mcp-transport') as HTMLSelectElement;
     const endpointGroup = this.shadowRoot?.getElementById('mcp-endpoint-group');
     const authTokenGroup = this.shadowRoot?.getElementById('mcp-auth-token-group');
+    const headersGroup = this.shadowRoot?.getElementById('mcp-headers-group');
+    const proxyGroup = this.shadowRoot?.getElementById('mcp-proxy-group');
     const commandGroup = this.shadowRoot?.getElementById('mcp-command-group');
     const argsGroup = this.shadowRoot?.getElementById('mcp-args-group');
     
-    if (transportSelect && endpointGroup && authTokenGroup && commandGroup && argsGroup) {
-      if (transportSelect.value === 'http') {
+    if (transportSelect && endpointGroup && authTokenGroup && headersGroup && proxyGroup && commandGroup && argsGroup) {
+      const isHttpTransport = transportSelect.value === 'http' || transportSelect.value === 'streamable-http';
+      if (isHttpTransport) {
         endpointGroup.style.display = 'block';
         authTokenGroup.style.display = 'block';
+        headersGroup.style.display = 'block';
+        proxyGroup.style.display = 'block';
         commandGroup.style.display = 'none';
         argsGroup.style.display = 'none';
       } else {
         endpointGroup.style.display = 'none';
         authTokenGroup.style.display = 'none';
+        headersGroup.style.display = 'none';
+        proxyGroup.style.display = 'none';
         commandGroup.style.display = 'block';
         argsGroup.style.display = 'block';
       }
@@ -3279,14 +3446,34 @@ export class SettingsPanel extends HTMLElement {
       return;
     }
 
-    if (transport === 'http') {
+    const isHttpTransport = transport === 'http' || transport === 'streamable-http';
+    
+    if (isHttpTransport) {
       const endpoint = (this.shadowRoot?.getElementById('new-mcp-endpoint') as HTMLInputElement).value.trim();
       const authToken = (this.shadowRoot?.getElementById('new-mcp-auth-token') as HTMLInputElement).value.trim() || undefined;
+      const headersStr = (this.shadowRoot?.getElementById('new-mcp-headers') as HTMLTextAreaElement).value.trim();
+      const useDevProxy = (this.shadowRoot?.getElementById('new-mcp-use-proxy') as HTMLInputElement).checked;
+      
       if (!endpoint) {
         alert('Please enter an endpoint URL');
         return;
       }
-      await mcpServerStorage.create({ name, transport, endpoint, authToken });
+
+      // Parse headers JSON if provided
+      let headers: Record<string, string> | undefined;
+      if (headersStr) {
+        try {
+          headers = JSON.parse(headersStr);
+          if (typeof headers !== 'object' || Array.isArray(headers)) {
+            throw new Error('Headers must be a JSON object');
+          }
+        } catch (e) {
+          alert('Invalid headers JSON format. Please provide a valid JSON object.');
+          return;
+        }
+      }
+
+      await mcpServerStorage.create({ name, transport, endpoint, authToken, headers, useDevProxy });
     } else {
       const command = (this.shadowRoot?.getElementById('new-mcp-command') as HTMLInputElement).value.trim();
       const argsString = (this.shadowRoot?.getElementById('new-mcp-args') as HTMLInputElement).value.trim();
@@ -3359,6 +3546,138 @@ export class SettingsPanel extends HTMLElement {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       alert(`Failed to refresh tools: ${message}`);
+    }
+  }
+
+  // ============================================
+  // MCP Server Export/Import Methods
+  // ============================================
+
+  private async handleExportMCPServers() {
+    try {
+      if (this.mcpServers.length === 0) {
+        alert('No MCP servers to export');
+        return;
+      }
+      await downloadMCPServers();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to export MCP servers: ${message}`);
+    }
+  }
+
+  private pendingMCPImportContent: string | null = null;
+
+  private async handleImportMCPFile(file: File) {
+    try {
+      const content = await readFileContent(file);
+      
+      // Validate JSON structure
+      let data: { servers?: Array<{ name: string }> };
+      try {
+        data = JSON.parse(content);
+      } catch {
+        alert('Invalid JSON file');
+        return;
+      }
+
+      if (!data.servers || !Array.isArray(data.servers)) {
+        alert('Invalid MCP server export format. Expected a JSON file with a "servers" array.');
+        return;
+      }
+
+      if (data.servers.length === 0) {
+        alert('No servers found in the import file');
+        return;
+      }
+
+      // Check for potential name conflicts
+      const existingNames = new Set(this.mcpServers.map(s => s.name.toLowerCase()));
+      const importNames = data.servers.map(s => s.name || '');
+      const conflicts = importNames.filter(name => existingNames.has(name.toLowerCase()));
+
+      // Store content for later use
+      this.pendingMCPImportContent = content;
+
+      // Show conflict modal with appropriate message
+      const messageEl = this.shadowRoot?.getElementById('mcp-import-conflict-message');
+      if (messageEl) {
+        if (conflicts.length > 0) {
+          messageEl.innerHTML = `
+            <p>Found <strong>${data.servers.length}</strong> server(s) to import.</p>
+            <p style="margin-top: var(--space-2); color: var(--color-warning);">
+              <strong>${conflicts.length}</strong> server(s) have names that already exist: 
+              <em>${conflicts.slice(0, 3).join(', ')}${conflicts.length > 3 ? '...' : ''}</em>
+            </p>
+          `;
+        } else {
+          messageEl.innerHTML = `
+            <p>Found <strong>${data.servers.length}</strong> server(s) to import.</p>
+            <p style="margin-top: var(--space-2); color: var(--color-success);">No name conflicts detected.</p>
+          `;
+        }
+      }
+
+      this.showMCPImportConflictModal();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to read import file: ${message}`);
+    }
+  }
+
+  private showMCPImportConflictModal() {
+    const modal = this.shadowRoot?.getElementById('mcp-import-conflict-modal');
+    if (modal) {
+      modal.style.display = 'flex';
+      // Reset to default strategy
+      const skipRadio = this.shadowRoot?.querySelector('input[name="mcp-conflict-strategy"][value="skip"]') as HTMLInputElement;
+      if (skipRadio) {
+        skipRadio.checked = true;
+      }
+    }
+  }
+
+  private hideMCPImportConflictModal() {
+    const modal = this.shadowRoot?.getElementById('mcp-import-conflict-modal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+    this.pendingMCPImportContent = null;
+  }
+
+  private async handleConfirmMCPImport() {
+    if (!this.pendingMCPImportContent) {
+      this.hideMCPImportConflictModal();
+      return;
+    }
+
+    // Get selected conflict strategy
+    const selectedRadio = this.shadowRoot?.querySelector('input[name="mcp-conflict-strategy"]:checked') as HTMLInputElement;
+    const strategy = (selectedRadio?.value || 'skip') as MCPImportConflictStrategy;
+
+    try {
+      const result = await importMCPServers(this.pendingMCPImportContent, strategy);
+      
+      this.hideMCPImportConflictModal();
+      await this.loadData();
+      this.render();
+
+      // Show result message
+      const messages: string[] = [];
+      if (result.imported > 0) {
+        messages.push(`${result.imported} server(s) imported`);
+      }
+      if (result.replaced > 0) {
+        messages.push(`${result.replaced} server(s) replaced`);
+      }
+      if (result.skipped > 0) {
+        messages.push(`${result.skipped} server(s) skipped`);
+      }
+
+      alert(messages.length > 0 ? messages.join(', ') : 'No servers were imported');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to import MCP servers: ${message}`);
     }
   }
 
