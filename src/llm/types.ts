@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - LLM Types
-// Version: 1.0.0
 // ============================================
 
 export interface LLMMessage {

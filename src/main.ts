@@ -1,15 +1,24 @@
 // ============================================
 // AI Brainstorm - Main Entry Point
-// Version: 1.0.0
 // ============================================
 
 import './styles/global.css';
 import './components/app-shell';
 import './utils/keyboard'; // Initialize keyboard shortcuts
 import { eventBus } from './utils/event-bus';
+import { languageService } from './prompts/language-service';
 
-// Application version
-const APP_VERSION = '1.0.0';
+// Application version - injected by Vite from package.json
+declare const __APP_VERSION__: string;
+const APP_VERSION = __APP_VERSION__;
+
+// Expose language service to window for debugging
+declare global {
+  interface Window {
+    languageService: typeof languageService;
+  }
+}
+window.languageService = languageService;
 
 /**
  * Initialize the application

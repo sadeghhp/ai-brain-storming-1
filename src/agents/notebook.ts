@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Notebook Manager
-// Version: 1.0.0
 // ============================================
 
 import { notebookStorage } from '../storage/storage-manager';

@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Keyboard Shortcuts
-// Version: 1.0.0
 // ============================================
 
 import { eventBus } from './event-bus';

@@ -1,11 +1,11 @@
 // ============================================
 // AI Brainstorm - Context Window Strategy
-// Version: 1.2.0
 // ============================================
 
 import type { Message, Agent, UserInterjection, Notebook } from '../types';
 import type { LLMMessage } from '../llm/types';
 import { countTokens } from '../llm/token-counter';
+import { TIME_DECAY, CONTEXT_BUDGET, MESSAGE_IMPORTANCE, TOKEN_ESTIMATION } from '../constants';
 
 /**
  * Message with calculated importance score for prioritized selection
@@ -28,10 +28,10 @@ interface TimeDecayConfig {
 }
 
 const DEFAULT_TIME_DECAY: TimeDecayConfig = {
-  enabled: true,
-  halfLifeMs: 30 * 60 * 1000,  // 30 minutes half-life
-  minDecayFactor: 0.3,         // Minimum 30% of original score
-  roundDecay: 0.1,             // 10% penalty per round old
+  enabled: TIME_DECAY.ENABLED,
+  halfLifeMs: TIME_DECAY.HALF_LIFE_MS,
+  minDecayFactor: TIME_DECAY.MIN_DECAY_FACTOR,
+  roundDecay: TIME_DECAY.ROUND_DECAY,
 };
 
 export interface ContextBudget {
@@ -53,7 +53,7 @@ export class ContextStrategy {
 
   constructor(
     maxTokens: number, 
-    responseReserve: number = 1000,
+    responseReserve: number = CONTEXT_BUDGET.RESPONSE_RESERVE,
     timeDecay: Partial<TimeDecayConfig> = {}
   ) {
     this.maxTokens = maxTokens;
@@ -70,9 +70,9 @@ export class ContextStrategy {
     return {
       total: this.maxTokens,
       systemPrompt: systemPromptTokens,
-      notebook: Math.floor(available * 0.1), // 10% for notebook
-      interjections: Math.floor(available * 0.15), // 15% for user interjections
-      messages: Math.floor(available * 0.75), // 75% for messages
+      notebook: Math.floor(available * CONTEXT_BUDGET.NOTEBOOK),
+      interjections: Math.floor(available * CONTEXT_BUDGET.INTERJECTIONS),
+      messages: Math.floor(available * CONTEXT_BUDGET.MESSAGES),
       responseReserve: this.responseReserve,
     };
   }
@@ -108,12 +108,12 @@ export class ContextStrategy {
     const scoredMessages: ScoredMessage[] = messages.map((message, index) => ({
       message,
       score: this.calculateMessageImportance(message, agentId, index, messages.length, currentRound, now),
-      tokens: countTokens(message.content) + 10, // +10 for formatting overhead
+      tokens: countTokens(message.content) + TOKEN_ESTIMATION.MESSAGE_OVERHEAD,
     }));
 
     // Separate critical messages (must include) from regular messages
-    const criticalMessages = scoredMessages.filter(sm => sm.score >= 100);
-    const regularMessages = scoredMessages.filter(sm => sm.score < 100);
+    const criticalMessages = scoredMessages.filter(sm => sm.score >= MESSAGE_IMPORTANCE.CRITICAL_THRESHOLD);
+    const regularMessages = scoredMessages.filter(sm => sm.score < MESSAGE_IMPORTANCE.CRITICAL_THRESHOLD);
 
     // Sort regular messages by score (highest first)
     regularMessages.sort((a, b) => b.score - a.score);
@@ -164,46 +164,45 @@ export class ContextStrategy {
     // Message type importance (critical types get 100+ score)
     switch (message.type) {
       case 'opening':
-        score += 150; // Opening statement is critical context
+        score += MESSAGE_IMPORTANCE.OPENING;
         isCritical = true;
         break;
       case 'summary':
-        score += 120; // Secretary summaries provide condensed context
+        score += MESSAGE_IMPORTANCE.SUMMARY;
         isCritical = true;
         break;
       case 'interjection':
-        score += 80; // User guidance is high priority
+        score += MESSAGE_IMPORTANCE.INTERJECTION;
         break;
       case 'system':
-        score += 70; // System messages (round decisions, etc.)
+        score += MESSAGE_IMPORTANCE.SYSTEM;
         break;
       case 'response':
-        score += 30; // Base score for regular responses
+        score += MESSAGE_IMPORTANCE.RESPONSE;
         break;
     }
 
     // Relevance to current agent
     if (message.agentId === agentId) {
-      score += 40; // Own previous messages (continuity)
+      score += MESSAGE_IMPORTANCE.OWN_MESSAGE;
     }
     if (message.addressedTo === agentId) {
-      score += 50; // Messages addressed to this agent
+      score += MESSAGE_IMPORTANCE.ADDRESSED_TO;
     }
 
     // User weight/votes (each upvote adds 10, downvotes subtract)
     score += message.weight * 10;
 
     // Recency bonus (newer messages get slight preference)
-    // Scale: most recent gets +20, oldest gets +0
     const recencyFactor = index / Math.max(totalMessages - 1, 1);
-    score += Math.floor(recencyFactor * 20);
+    score += Math.floor(recencyFactor * MESSAGE_IMPORTANCE.RECENCY_BONUS);
 
     // Position bonuses (preserve conversation structure)
     if (index === 0) {
-      score += 30; // First message (conversation opener)
+      score += MESSAGE_IMPORTANCE.FIRST_MESSAGE;
     }
     if (index >= totalMessages - 3) {
-      score += 25; // Last 3 messages (recent context)
+      score += MESSAGE_IMPORTANCE.RECENT_CONTEXT;
     }
 
     // Apply time-based and round-based decay for non-critical messages
@@ -262,7 +261,7 @@ export class ContextStrategy {
     const sorted = [...interjections].sort((a, b) => b.createdAt - a.createdAt);
 
     for (const interjection of sorted) {
-      const tokens = countTokens(interjection.content) + 10;
+      const tokens = countTokens(interjection.content) + TOKEN_ESTIMATION.MESSAGE_OVERHEAD;
 
       if (usedTokens + tokens <= budget) {
         selected.push(interjection);

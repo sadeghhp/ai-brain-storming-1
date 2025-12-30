@@ -1,11 +1,10 @@
 // ============================================
 // AI Brainstorm - New Conversation Modal
-// Version: 2.12.0
 // ============================================
 
 import { ConversationEngine } from '../engine/conversation-engine';
 import { presetStorage, providerStorage, settingsStorage, mcpServerStorage } from '../storage/storage-manager';
-import { presetCategories } from '../agents/presets';
+import { getSoftwareTeamPresets, getFinanceTeamPresets, getAITeamPresets, getGeneralTeamPresets, getCriticalThinkingTeamPresets } from '../agents/presets';
 import { llmRouter } from '../llm/llm-router';
 import { eventBus } from '../utils/event-bus';
 import { shadowBaseStyles } from '../styles/shadow-base-styles';
@@ -13,9 +12,19 @@ import { startingStrategies, getStrategyById, buildOpeningStatement, buildGround
 import { conversationTemplates, templateCategories, getTemplateById } from '../strategies/conversation-templates';
 import { getEnabledLanguages, type Language } from '../utils/languages';
 import { languageService, type TranslationProgress } from '../prompts/language-service';
-import type { AgentPreset, LLMProvider, ConversationMode, ProviderModel, StartingStrategyId, ConversationDepth, AppSettings, MCPServer, ToolApprovalMode } from '../types';
-import './agent-editor-modal';
-import type { AgentEditorModal, AgentEditorResult } from './agent-editor-modal';
+import { validateSubject, validateGoal, sanitizeInput } from '../utils/validation';
+import './agent-preset-editor-modal';
+import type { AgentPresetEditorModal } from './agent-preset-editor-modal';
+import type { AgentPreset, LLMProvider, ConversationMode, StartingStrategyId, ConversationDepth, AppSettings, MCPServer, ToolApprovalMode, ProviderModel } from '../types';
+
+// Quick team definitions for dropdown
+const QUICK_TEAMS = [
+  { id: 'software', name: 'Software Team', icon: '💻', getPresets: getSoftwareTeamPresets },
+  { id: 'finance', name: 'Finance Team', icon: '📈', getPresets: getFinanceTeamPresets },
+  { id: 'ai', name: 'AI/ML Team', icon: '🤖', getPresets: getAITeamPresets },
+  { id: 'general', name: 'General Team', icon: '🎯', getPresets: getGeneralTeamPresets },
+  { id: 'critical', name: 'Critical Thinking', icon: '🔍', getPresets: getCriticalThinkingTeamPresets },
+] as const;
 
 // Depth level configuration for UI display
 const DEPTH_LEVELS: Array<{ id: ConversationDepth; name: string; icon: string; description: string }> = [
@@ -26,23 +35,6 @@ const DEPTH_LEVELS: Array<{ id: ConversationDepth; name: string; icon: string; d
   { id: 'deep', name: 'Deep', icon: '🔬', description: 'Comprehensive' },
 ];
 
-
-interface CustomAgent {
-  id: string;
-  name: string;
-  role: string;
-  expertise: string;
-  systemPrompt: string;
-  strengths: string;
-  thinkingStyle: string;
-  thinkingDepth: number;
-  creativityLevel: number;
-  notebookUsage: number;
-  llmProviderId: string;
-  modelId: string;
-  presetId?: string;
-}
-
 export class NewConversationModal extends HTMLElement {
   private readonly uid = `new-conversation-${Math.random().toString(36).slice(2, 10)}`;
   private presets: AgentPreset[] = [];
@@ -50,12 +42,8 @@ export class NewConversationModal extends HTMLElement {
   private selectedPresets: Set<string> = new Set();
   private selectedProviderId: string | null = null;
   private selectedModelId: string | null = null;
-  private isAdvancedMode: boolean = false;
-  private customAgents: CustomAgent[] = [];
-  private editingAgentIndex: number = -1;
   private isFetchingModels: boolean = false;
   private modelFetchError: string | null = null;
-  private expandedCategories: Set<string> = new Set();
   // Draft form fields (persist across re-renders)
   private draftSubject: string = '';
   private draftGoal: string = '';
@@ -84,6 +72,8 @@ export class NewConversationModal extends HTMLElement {
   private mcpServers: MCPServer[] = [];
   private selectedMcpServerIds: Set<string> = new Set();
   private mcpToolApprovalMode: ToolApprovalMode = 'auto';
+  // Agent search state
+  private agentSearchQuery: string = '';
 
   private elId(suffix: string): string {
     return `${this.uid}-${suffix}`;
@@ -256,13 +246,40 @@ export class NewConversationModal extends HTMLElement {
     }
   }
 
+  /**
+   * Show validation error for a field
+   */
+  private showValidationError(fieldId: string, message: string): void {
+    const field = this.shadowRoot?.getElementById(fieldId) as HTMLInputElement | HTMLTextAreaElement;
+    if (field) {
+      field.classList.add('error');
+      field.focus();
+      
+      // Show error message
+      let errorEl = field.parentElement?.querySelector('.validation-error') as HTMLElement;
+      if (!errorEl) {
+        errorEl = document.createElement('span');
+        errorEl.className = 'validation-error';
+        errorEl.style.cssText = 'color: var(--error-color, #ef4444); font-size: 0.875rem; margin-top: 0.25rem; display: block;';
+        field.parentElement?.appendChild(errorEl);
+      }
+      errorEl.textContent = message;
+      
+      // Clear error on input
+      const clearError = () => {
+        field.classList.remove('error');
+        errorEl?.remove();
+        field.removeEventListener('input', clearError);
+      };
+      field.addEventListener('input', clearError);
+    }
+  }
+
   private close() {
     this.setAttribute('open', 'false');
     this.selectedPresets.clear();
     this.selectedProviderId = null;
     this.selectedModelId = null;
-    this.customAgents = [];
-    this.editingAgentIndex = -1;
     // Reset draft fields
     this.draftSubject = '';
     this.draftGoal = '';
@@ -276,6 +293,235 @@ export class NewConversationModal extends HTMLElement {
     this.selectedDepth = 'standard';
     // Reset language state
     this.selectedLanguage = '';
+    // Reset agent search
+    this.agentSearchQuery = '';
+  }
+
+  /**
+   * Apply a quick team preset selection
+   */
+  private applyQuickTeam(teamId: string) {
+    const team = QUICK_TEAMS.find(t => t.id === teamId);
+    if (!team) return;
+    
+    const teamPresets = team.getPresets();
+    const visibleIds = new Set(this.presets.map(p => p.id));
+    
+    // Clear current selection and add team presets
+    this.selectedPresets.clear();
+    for (const preset of teamPresets) {
+      if (visibleIds.has(preset.id)) {
+        this.selectedPresets.add(preset.id);
+      }
+    }
+    
+    this.renderPreservingDraft();
+  }
+
+  /**
+   * Open the preset editor to create a new custom agent
+   */
+  private openPresetEditor() {
+    const presetEditor = this.shadowRoot?.getElementById('preset-editor') as AgentPresetEditorModal | null;
+    if (!presetEditor) return;
+
+    presetEditor.configure({
+      mode: 'create'
+    });
+    presetEditor.setAttribute('open', 'true');
+  }
+
+  /**
+   * Update the selection count display
+   */
+  /**
+   * Update the agent list UI (for search filtering)
+   */
+  private updateAgentList() {
+    const listEl = this.shadowRoot?.querySelector('.agent-list');
+    if (listEl) {
+      listEl.innerHTML = this.renderAgentList();
+      // Re-attach event handlers for the new list
+      this.attachAgentListHandlers();
+      // Sync selection state visuals
+      this.updateAgentListSelectionState();
+    }
+  }
+
+  /**
+   * Update agent row/button visuals based on current selection
+   */
+  private updateAgentListSelectionState() {
+    this.shadowRoot?.querySelectorAll('.agent-row').forEach(row => {
+      const presetId = row.getAttribute('data-preset-id');
+      const isSelected = !!presetId && this.selectedPresets.has(presetId);
+      row.classList.toggle('selected', isSelected);
+    });
+
+    this.shadowRoot?.querySelectorAll('.agent-add-btn').forEach(btn => {
+      const presetId = btn.getAttribute('data-preset-id');
+      const isSelected = !!presetId && this.selectedPresets.has(presetId);
+      btn.classList.toggle('added', isSelected);
+      btn.textContent = isSelected ? '−' : '+';
+      btn.setAttribute('title', isSelected ? 'Remove from team' : 'Add to team');
+    });
+  }
+
+  /**
+   * Attach event handlers to agent list items
+   */
+  private attachAgentListHandlers() {
+    this.shadowRoot?.querySelectorAll('.agent-add-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const presetId = btn.getAttribute('data-preset-id');
+        if (!presetId) return;
+        
+        if (this.selectedPresets.has(presetId)) {
+          this.selectedPresets.delete(presetId);
+        } else {
+          this.selectedPresets.add(presetId);
+        }
+        
+        this.updateSelectionUI();
+      });
+    });
+
+    this.shadowRoot?.querySelectorAll('.agent-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const presetId = row.getAttribute('data-preset-id');
+        if (!presetId) return;
+        
+        if (this.selectedPresets.has(presetId)) {
+          this.selectedPresets.delete(presetId);
+        } else {
+          this.selectedPresets.add(presetId);
+        }
+        
+        this.updateSelectionUI();
+      });
+    });
+  }
+
+  /**
+   * Update team panel visuals (count and member list)
+   */
+  private updateTeamPanel() {
+    const teamCount = this.shadowRoot?.querySelector('.team-count');
+    if (teamCount) {
+      const count = this.selectedPresets.size;
+      teamCount.textContent = `${count} agents ${count < 2 ? '(min 2)' : ''}`;
+    }
+
+    const teamMembers = this.shadowRoot?.querySelector('.team-members') as HTMLElement | null;
+    const teamEmpty = this.shadowRoot?.querySelector('.team-empty') as HTMLElement | null;
+
+    if (!teamMembers || !teamEmpty) return;
+
+    if (this.selectedPresets.size === 0) {
+      teamMembers.style.display = 'none';
+      teamEmpty.style.display = 'block';
+      teamMembers.innerHTML = '';
+      return;
+    }
+
+    const membersHtml = Array.from(this.selectedPresets).map(id => {
+      const preset = this.presets.find(p => p.id === id);
+      if (!preset) return '';
+      const initials = preset.name.slice(0, 2).toUpperCase();
+      return `
+        <div class="team-agent" data-preset-id="${id}">
+          <div class="agent-avatar">${initials}</div>
+          <div class="agent-info">
+            <span class="agent-name">${preset.name}</span>
+            <span class="agent-expertise">${preset.expertise.split(',')[0]}</span>
+          </div>
+          <button type="button" class="remove-agent-btn" data-preset-id="${id}" title="Remove">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      `;
+    }).join('');
+
+    teamMembers.innerHTML = membersHtml;
+    teamMembers.style.display = 'flex';
+    teamEmpty.style.display = 'none';
+
+    // Re-attach remove handlers
+    this.shadowRoot?.querySelectorAll('.remove-agent-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const presetId = btn.getAttribute('data-preset-id');
+        if (presetId) {
+          this.selectedPresets.delete(presetId);
+          this.updateSelectionUI();
+        }
+      });
+    });
+  }
+
+  /**
+   * Update all selection-related UI without full re-render
+   */
+  private updateSelectionUI() {
+    this.updateTeamPanel();
+    this.updateAgentListSelectionState();
+    this.updateSubmitButtonState();
+  }
+
+  /**
+   * Update submit button enabled/disabled state
+   */
+  private updateSubmitButtonState() {
+    const submitBtn = this.shadowRoot?.querySelector('button[type="submit"]') as HTMLButtonElement | null;
+    if (submitBtn) {
+      const hasEnoughAgents = this.selectedPresets.size >= 2;
+      const hasModel = !!this.selectedModelId || this.providers.some(p => p.isActive && (p.models?.length ?? 0) > 0);
+      submitBtn.disabled = !(hasEnoughAgents && hasModel);
+    }
+  }
+
+  /**
+   * Get filtered presets based on search query
+   */
+  private getFilteredPresets(): AgentPreset[] {
+    if (!this.agentSearchQuery.trim()) {
+      return this.presets;
+    }
+    const query = this.agentSearchQuery.toLowerCase();
+    return this.presets.filter(p =>
+      p.name.toLowerCase().includes(query) ||
+      p.expertise.toLowerCase().includes(query)
+    );
+  }
+
+  /**
+   * Render the agent list with add buttons
+   */
+  private renderAgentList(): string {
+    const filteredPresets = this.getFilteredPresets();
+    
+    if (filteredPresets.length === 0) {
+      return `<div class="agent-list-empty">No agents found</div>`;
+    }
+
+    return filteredPresets.map(preset => {
+      const isSelected = this.selectedPresets.has(preset.id);
+      return `
+        <div class="agent-row ${isSelected ? 'selected' : ''}" data-preset-id="${preset.id}">
+          <span class="agent-row-name">${preset.name}</span>
+          <span class="agent-row-tag">${preset.expertise.split(',')[0]}</span>
+          <button type="button" class="agent-add-btn ${isSelected ? 'added' : ''}" 
+                  data-preset-id="${preset.id}" 
+                  title="${isSelected ? 'Remove from team' : 'Add to team'}">
+            ${isSelected ? '−' : '+'}
+          </button>
+        </div>
+      `;
+    }).join('');
   }
 
   /**
@@ -314,35 +560,6 @@ export class NewConversationModal extends HTMLElement {
     this.render();
   }
 
-  private computeCanCreate(): boolean {
-    const activeProviders = this.providers.filter(p => p.isActive);
-    const hasActiveProvider = activeProviders.length > 0;
-
-    const providerId = this.selectedProviderId || activeProviders[0]?.id || '';
-    const selectedProvider = this.providers.find(p => p.id === providerId) || activeProviders[0];
-    const hasModels = (selectedProvider?.models?.length ?? 0) > 0;
-
-    return this.isAdvancedMode
-      ? this.customAgents.length >= 2
-      : (this.selectedPresets.size >= 2 && hasModels && hasActiveProvider);
-  }
-
-  private generateAgentId(): string {
-    return `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  }
-
-  private getDefaultProvider(): LLMProvider | undefined {
-    return this.providers.find(p => p.isActive && (p.models?.length ?? 0) > 0);
-  }
-
-  private getDefaultProviderAndModel(): { provider: LLMProvider; modelId: string } | null {
-    const provider = this.getDefaultProvider();
-    if (!provider) return null;
-    const firstModel = provider.models[0];
-    if (!firstModel) return null;
-    return { provider, modelId: firstModel.id };
-  }
-
   private render() {
     if (!this.shadowRoot) return;
 
@@ -360,9 +577,7 @@ export class NewConversationModal extends HTMLElement {
     const hasModels = availableModels.length > 0;
     const hasActiveProvider = activeProviders.length > 0;
     
-    const canCreate = this.isAdvancedMode 
-      ? this.customAgents.length >= 2 
-      : (this.selectedPresets.size >= 2 && hasModels && hasActiveProvider);
+    const canCreate = this.selectedPresets.size >= 2 && hasModels && hasActiveProvider;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -557,33 +772,336 @@ export class NewConversationModal extends HTMLElement {
           color: var(--color-text-primary);
         }
 
-        .preset-section-label {
+        /* Simplified Agent Selection */
+        .agent-selection-group {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-4);
+        }
+
+        .step-label {
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-secondary);
+          margin-bottom: var(--space-2);
+          display: block;
+        }
+
+        /* Quick Start Section */
+        .quick-start-section {
+          padding: var(--space-3);
+          background: var(--color-primary-dim);
+          border-radius: var(--radius-md);
+        }
+
+        .quick-team-buttons {
+          display: flex;
+          gap: var(--space-2);
+          flex-wrap: wrap;
+        }
+
+        .quick-team-btn {
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          color: var(--color-text-primary);
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        .quick-team-btn:hover {
+          background: var(--color-surface-hover);
+          border-color: var(--color-primary);
+          transform: translateY(-1px);
+        }
+
+        .quick-team-btn .team-icon {
+          font-size: var(--text-base);
+        }
+
+        /* Selection Divider */
+        .selection-divider {
+          text-align: center;
+          color: var(--color-text-tertiary);
+          position: relative;
+          font-size: var(--text-sm);
+        }
+
+        .selection-divider::before,
+        .selection-divider::after {
+          content: '';
+          position: absolute;
+          top: 50%;
+          width: 40%;
+          height: 1px;
+          background: var(--color-border);
+        }
+
+        .selection-divider::before {
+          left: 0;
+        }
+
+        .selection-divider::after {
+          right: 0;
+        }
+
+        /* Agent Browser */
+        .agent-browser {
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          overflow: hidden;
+        }
+
+        .agent-browser .step-label {
+          padding: var(--space-3);
+          padding-bottom: 0;
+        }
+
+        .agent-search-wrapper {
+          position: relative;
+          padding: var(--space-2) var(--space-3);
+        }
+
+        .agent-search-icon {
+          position: absolute;
+          left: calc(var(--space-3) + 10px);
+          top: 50%;
+          transform: translateY(-50%);
+          color: var(--color-text-tertiary);
+          pointer-events: none;
+        }
+
+        .agent-search-input {
+          width: 100%;
+          padding: var(--space-2) var(--space-3);
+          padding-left: 32px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          color: var(--color-text-primary);
+          font-size: var(--text-sm);
+        }
+
+        .agent-search-input:focus {
+          outline: none;
+          border-color: var(--color-primary);
+        }
+
+        .agent-list {
+          max-height: 200px;
+          overflow-y: auto;
+          border-top: 1px solid var(--color-border);
+        }
+
+        .agent-list-empty {
+          padding: var(--space-4);
+          text-align: center;
+          color: var(--color-text-tertiary);
+          font-size: var(--text-sm);
+        }
+
+        .agent-row {
+          display: flex;
+          align-items: center;
+          padding: var(--space-2) var(--space-3);
+          border-bottom: 1px solid var(--color-border);
+          transition: background var(--transition-fast);
+        }
+
+        .agent-row:last-child {
+          border-bottom: none;
+        }
+
+        .agent-row:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .agent-row.selected {
+          background: var(--color-primary-dim);
+        }
+
+        .agent-row-name {
+          flex: 1;
+          font-size: var(--text-sm);
+          color: var(--color-text-primary);
+        }
+
+        .agent-row-tag {
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          background: var(--color-surface);
+          padding: 2px 8px;
+          border-radius: var(--radius-sm);
+          margin-right: var(--space-2);
+        }
+
+        .agent-add-btn {
+          width: 24px;
+          height: 24px;
+          border-radius: var(--radius-full);
+          border: 1px solid var(--color-border);
+          background: var(--color-surface);
+          color: var(--color-text-secondary);
+          font-size: var(--text-lg);
+          font-weight: var(--font-bold);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all var(--transition-fast);
+        }
+
+        .agent-add-btn:hover {
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .agent-add-btn.added {
+          background: var(--color-primary);
+          border-color: var(--color-primary);
+          color: white;
+        }
+
+        /* Selected Team Panel */
+        .selected-team-panel {
+          background: var(--color-bg-tertiary);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          padding: var(--space-3);
+        }
+
+        .team-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
           margin-bottom: var(--space-2);
         }
 
-        .preset-count {
+        .team-header .step-label {
+          margin-bottom: 0;
+        }
+
+        .team-count {
           font-size: var(--text-xs);
-          color: var(--color-primary);
-          background: var(--color-primary-dim);
+          color: var(--color-text-tertiary);
+          background: var(--color-surface);
           padding: 2px 8px;
           border-radius: var(--radius-full);
         }
 
-        .preset-grid-wrapper {
-          position: relative;
+        .team-empty {
+          padding: var(--space-4);
+          text-align: center;
+          color: var(--color-text-tertiary);
+          font-size: var(--text-sm);
         }
 
-        .preset-grid {
-          max-height: 240px;
-          overflow-y: auto;
-          overflow-x: hidden;
-          background: var(--color-bg-tertiary);
-          border: 1px solid var(--color-border);
+        .team-members {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-2);
+        }
+
+        .team-agent {
+          display: flex;
+          align-items: center;
+          gap: var(--space-3);
+          padding: var(--space-2);
+          background: var(--color-surface);
           border-radius: var(--radius-md);
-          scroll-behavior: smooth;
+          transition: background var(--transition-fast);
+        }
+
+        .team-agent:hover {
+          background: var(--color-surface-hover);
+        }
+
+        .team-agent .agent-avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: var(--radius-full);
+          background: var(--color-primary-dim);
+          color: var(--color-primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: var(--text-xs);
+          font-weight: var(--font-bold);
+          flex-shrink: 0;
+        }
+
+        .team-agent .agent-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .team-agent .agent-name {
+          display: block;
+          font-size: var(--text-sm);
+          font-weight: var(--font-medium);
+          color: var(--color-text-primary);
+        }
+
+        .team-agent .agent-expertise {
+          display: block;
+          font-size: var(--text-xs);
+          color: var(--color-text-tertiary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .remove-agent-btn {
+          padding: var(--space-1);
+          background: transparent;
+          border: none;
+          color: var(--color-text-tertiary);
+          cursor: pointer;
+          border-radius: var(--radius-sm);
+          transition: all var(--transition-fast);
+        }
+
+        .remove-agent-btn:hover {
+          background: rgba(239, 68, 68, 0.1);
+          color: var(--color-error);
+        }
+
+        .add-custom-agent-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-2);
+          width: 100%;
+          padding: var(--space-2) var(--space-3);
+          margin-top: var(--space-2);
+          background: transparent;
+          border: 1px dashed var(--color-border);
+          border-radius: var(--radius-md);
+          color: var(--color-text-secondary);
+          font-size: var(--text-sm);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .add-custom-agent-btn:hover {
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+          color: var(--color-primary);
+        }
+
+        .add-custom-agent-btn svg {
+          opacity: 0.7;
+        }
+
+        .add-custom-agent-btn:hover svg {
+          opacity: 1;
         }
 
         /* MCP Server Selection */
@@ -693,104 +1211,6 @@ export class NewConversationModal extends HTMLElement {
         .approval-desc {
           font-size: var(--text-xs);
           color: var(--color-text-tertiary);
-        }
-
-        .preset-chip {
-          padding: var(--space-2) var(--space-3);
-          background: var(--color-surface);
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-md);
-          cursor: pointer;
-          font-size: var(--text-sm);
-          text-align: center;
-          transition: all var(--transition-fast);
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          color: var(--color-text-secondary);
-        }
-
-        .preset-chip:hover {
-          background: var(--color-surface-hover);
-          border-color: var(--color-border-strong);
-          color: var(--color-text-primary);
-          transform: translateY(-1px);
-        }
-
-        .preset-chip.selected {
-          background: var(--color-primary-dim);
-          border-color: var(--color-primary);
-          color: var(--color-primary);
-          box-shadow: 0 0 0 1px var(--color-primary);
-        }
-
-        .preset-category {
-          border-bottom: 1px solid var(--color-border);
-        }
-
-        .preset-category:last-child {
-          border-bottom: none;
-        }
-
-        .preset-category-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: var(--space-3);
-          cursor: pointer;
-          transition: background var(--transition-fast);
-          user-select: none;
-        }
-
-        .preset-category-header:hover {
-          background: var(--color-surface-hover);
-        }
-
-        .preset-category-header.expanded {
-          background: var(--color-surface);
-        }
-
-        .preset-category-title {
-          display: flex;
-          align-items: center;
-          gap: var(--space-2);
-          font-size: var(--text-sm);
-          font-weight: var(--font-medium);
-          color: var(--color-text-secondary);
-        }
-
-        .preset-category-icon {
-          font-size: var(--text-base);
-        }
-
-        .preset-category-count {
-          font-size: var(--text-xs);
-          color: var(--color-text-tertiary);
-          background: var(--color-surface);
-          padding: 2px 6px;
-          border-radius: var(--radius-sm);
-          margin-left: var(--space-2);
-        }
-
-        .preset-category-chevron {
-          transition: transform 0.2s ease;
-          color: var(--color-text-tertiary);
-        }
-
-        .preset-category-header.expanded .preset-category-chevron {
-          transform: rotate(180deg);
-        }
-
-        .preset-category-content {
-          display: none;
-          padding: var(--space-3);
-          padding-top: 0;
-          gap: var(--space-2);
-          flex-wrap: wrap;
-        }
-
-        .preset-category-content.expanded {
-          display: flex;
         }
 
         .provider-warning {
@@ -1641,23 +2061,9 @@ export class NewConversationModal extends HTMLElement {
 
               <div class="section-divider"></div>
 
-              <!-- Agent Mode Toggle -->
+              <!-- LLM Provider & Model -->
               <div class="form-group">
-                <label class="form-label">Agent Configuration</label>
-                <div class="agent-mode-toggle">
-                  <button type="button" class="mode-toggle-btn ${!this.isAdvancedMode ? 'active' : ''}" data-agent-mode="simple">
-                    Simple
-                  </button>
-                  <button type="button" class="mode-toggle-btn ${this.isAdvancedMode ? 'active' : ''}" data-agent-mode="advanced">
-                    Advanced
-                  </button>
-                </div>
-              </div>
-
-              ${!this.isAdvancedMode ? `
-                <!-- Simple Mode: Shared LLM + Preset Selection -->
-                <div class="form-group">
-                  <label class="form-label">LLM Provider & Model (for all agents)</label>
+                <label class="form-label">LLM Provider & Model</label>
                   <div class="inline-select">
                     <select class="form-select" id="${this.elId('provider')}">
                       ${this.providers.map(p => `
@@ -1703,89 +2109,88 @@ export class NewConversationModal extends HTMLElement {
                   ` : ''}
                 </div>
 
-                <div class="form-group">
-                  <div class="preset-section-label">
-                    <label class="form-label" style="margin-bottom: 0;">Select Agents</label>
-                    <span class="preset-count">${this.selectedPresets.size} selected</span>
+              <!-- Agent Selection -->
+              <div class="form-group agent-selection-group">
+                
+                <!-- Step 1: Quick Start -->
+                <div class="quick-start-section">
+                  <label class="step-label">Step 1: Pick a team</label>
+                  <div class="quick-team-buttons">
+                    ${QUICK_TEAMS.map(team => `
+                      <button type="button" class="quick-team-btn" data-team-id="${team.id}">
+                        <span class="team-icon">${team.icon}</span>
+                        ${team.name}
+                      </button>
+                    `).join('')}
                   </div>
-                  <div class="preset-grid-wrapper">
-                    <div class="preset-grid">
-                      ${this.renderPresetCategoriesForSelection()}
                     </div>
-                  </div>
-                </div>
-              ` : `
-                <!-- Advanced Mode: Custom Agent List -->
-                <div class="form-group">
-                  <div class="preset-section-label">
-                    <label class="form-label" style="margin-bottom: 0;">Agents</label>
-                    <span class="preset-count">${this.customAgents.length} agents</span>
+
+                <!-- Divider -->
+                <div class="selection-divider">
+                  <span>or build your own</span>
                   </div>
                   
-                  ${this.customAgents.length === 0 ? `
-                    <div class="empty-agents">
-                      No agents added yet. Add at least 2 agents to start a conversation.
+                <!-- Step 2: Agent Browser -->
+                <div class="agent-browser">
+                  <label class="step-label">Step 2: Pick individual agents</label>
+                  <div class="agent-search-wrapper">
+                    <svg class="agent-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" class="agent-search-input" id="agent-search" 
+                           placeholder="Search agents..." 
+                           value="${this.agentSearchQuery}">
                     </div>
-                  ` : `
                     <div class="agent-list">
-                      ${this.customAgents.map((agent, index) => {
-                        const provider = this.providers.find(p => p.id === agent.llmProviderId);
-                        const model = provider?.models.find(m => m.id === agent.modelId);
-                        const initials = agent.name.slice(0, 2).toUpperCase();
-                        const color = this.getAgentColor(index);
-                        
+                    ${this.renderAgentList()}
+                  </div>
+                </div>
+
+                <!-- Your Team Panel -->
+                <div class="selected-team-panel">
+                  <div class="team-header">
+                    <label class="step-label">Your Team</label>
+                    <span class="team-count">${this.selectedPresets.size} agents ${this.selectedPresets.size < 2 ? '(min 2)' : ''}</span>
+                            </div>
+                  ${this.selectedPresets.size > 0 ? `
+                    <div class="team-members">
+                      ${Array.from(this.selectedPresets).map(id => {
+                        const preset = this.presets.find(p => p.id === id);
+                        if (!preset) return '';
+                        const initials = preset.name.slice(0, 2).toUpperCase();
                         return `
-                          <div class="agent-card" data-index="${index}">
-                            <div class="agent-avatar" style="background: ${color}20; color: ${color};">
-                              ${initials}
-                            </div>
+                          <div class="team-agent" data-preset-id="${id}">
+                            <div class="agent-avatar">${initials}</div>
                             <div class="agent-info">
-                              <div class="agent-name">${agent.name}</div>
-                              <div class="agent-meta">
-                                <span>${agent.role}</span>
-                                <span class="agent-model-badge">${model?.name || agent.modelId}</span>
+                              <span class="agent-name">${preset.name}</span>
+                              <span class="agent-expertise">${preset.expertise.split(',')[0]}</span>
                               </div>
-                            </div>
-                            <div class="agent-actions">
-                              <button type="button" class="agent-action-btn edit" data-index="${index}" title="Edit">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            <button type="button" class="remove-agent-btn" data-preset-id="${id}" title="Remove">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
                                 </svg>
                               </button>
-                              <button type="button" class="agent-action-btn delete" data-index="${index}" title="Remove">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                  <path d="M3 6h18"/>
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
-                              </button>
-                            </div>
                           </div>
                         `;
                       }).join('')}
                     </div>
+                  ` : `
+                    <div class="team-empty">
+                      No agents selected yet
+                    </div>
                   `}
-                  
-                  <div class="add-agent-btns">
-                    <button type="button" class="add-agent-btn" id="add-custom-agent">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"/>
-                        <line x1="5" y1="12" x2="19" y2="12"/>
-                      </svg>
-                      Custom Agent
-                    </button>
-                    <button type="button" class="add-agent-btn" id="add-from-preset">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                        <line x1="12" y1="8" x2="12" y2="16"/>
-                        <line x1="8" y1="12" x2="16" y2="12"/>
-                      </svg>
-                      From Preset
-                    </button>
-                  </div>
+                  <button type="button" class="add-custom-agent-btn" id="${this.elId('add-custom-agent')}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="5" x2="12" y2="19"/>
+                      <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Add Custom Agent
+                  </button>
                 </div>
-              `}
+
+                  </div>
             </div>
 
             <div class="modal-footer">
@@ -1799,86 +2204,11 @@ export class NewConversationModal extends HTMLElement {
       </div>
 
       <agent-editor-modal id="agent-editor"></agent-editor-modal>
+      <agent-preset-editor-modal id="preset-editor"></agent-preset-editor-modal>
     `;
 
     this.setupEventHandlers();
     this.hydrateDraftToDom();
-  }
-
-  private getPresetsByCategory(): Map<string, AgentPreset[]> {
-    const grouped = new Map<string, AgentPreset[]>();
-    
-    // Initialize all categories
-    for (const category of presetCategories) {
-      if (category.id !== 'custom') {
-        grouped.set(category.id, []);
-      }
-    }
-    
-    // Group presets by category
-    for (const preset of this.presets) {
-      const categoryPresets = grouped.get(preset.category);
-      if (categoryPresets) {
-        categoryPresets.push(preset);
-      }
-    }
-    
-    return grouped;
-  }
-
-  private renderPresetCategoriesForSelection(): string {
-    const grouped = this.getPresetsByCategory();
-    
-    // Auto-expand first category with presets if none expanded
-    if (this.expandedCategories.size === 0) {
-      for (const [categoryId, presets] of grouped) {
-        if (presets.length > 0) {
-          this.expandedCategories.add(categoryId);
-          break;
-        }
-      }
-    }
-    
-    return presetCategories
-      .filter(cat => cat.id !== 'custom')
-      .map(category => {
-        const presets = grouped.get(category.id) || [];
-        if (presets.length === 0) return ''; // Hide empty categories
-        
-        const isExpanded = this.expandedCategories.has(category.id);
-        const selectedCount = presets.filter(p => this.selectedPresets.has(p.id)).length;
-        
-        return `
-          <div class="preset-category" data-category="${category.id}">
-            <div class="preset-category-header ${isExpanded ? 'expanded' : ''}" data-category="${category.id}">
-              <div class="preset-category-title">
-                <span class="preset-category-icon">${category.icon}</span>
-                <span>${category.name}</span>
-                <span class="preset-category-count">${selectedCount > 0 ? `${selectedCount}/` : ''}${presets.length}</span>
-              </div>
-              <svg class="preset-category-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M6 9l6 6 6-6"/>
-              </svg>
-            </div>
-            <div class="preset-category-content ${isExpanded ? 'expanded' : ''}">
-              ${presets.map(p => `
-                <div class="preset-chip ${this.selectedPresets.has(p.id) ? 'selected' : ''}" data-preset-id="${p.id}">
-                  ${p.name}
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        `;
-      }).join('');
-  }
-
-  private getAgentColor(index: number): string {
-    const colors = [
-      '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
-      '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6',
-      '#06b6d4', '#0ea5e9', '#3b82f6',
-    ];
-    return colors[index % colors.length];
   }
 
   private setupEventHandlers() {
@@ -2020,16 +2350,7 @@ export class NewConversationModal extends HTMLElement {
       this.customOpeningStatement = openingInput.value;
     });
 
-    // Agent mode toggle
-    this.shadowRoot?.querySelectorAll('.mode-toggle-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const mode = btn.getAttribute('data-agent-mode');
-        this.isAdvancedMode = mode === 'advanced';
-        this.renderPreservingDraft();
-      });
-    });
-
-    // Simple mode: Provider/model selection
+    // Provider/model selection
     const providerSelect = this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement | null;
     const modelSelect = this.shadowRoot?.getElementById(this.elId('model')) as HTMLSelectElement | null;
 
@@ -2042,7 +2363,7 @@ export class NewConversationModal extends HTMLElement {
       const selectedProvider = this.providers.find(p => p.id === this.selectedProviderId);
       if (selectedProvider && selectedProvider.isActive && selectedProvider.autoFetchModels) {
         if (!selectedProvider.models || selectedProvider.models.length === 0) {
-          this.renderPreservingDraft(); // Show loading state without wiping draft fields
+          this.renderPreservingDraft();
           await this.fetchAndPersistModels(selectedProvider.id);
         }
       }
@@ -2064,265 +2385,56 @@ export class NewConversationModal extends HTMLElement {
     this.shadowRoot?.getElementById('refresh-models')?.addEventListener('click', async () => {
       const providerId = this.selectedProviderId || (this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement)?.value;
       if (providerId) {
-        this.renderPreservingDraft(); // Show loading state without wiping draft fields
+        this.renderPreservingDraft();
         await this.fetchAndPersistModels(providerId);
         this.renderPreservingDraft();
       }
     });
 
-    // Category accordion toggle
-    this.shadowRoot?.querySelectorAll('.preset-category-header').forEach(header => {
-      header.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const categoryId = header.getAttribute('data-category');
-        if (!categoryId) return;
-        
-        const content = header.nextElementSibling as HTMLElement;
-        const isExpanded = header.classList.contains('expanded');
-        
-        if (isExpanded) {
-          this.expandedCategories.delete(categoryId);
-          header.classList.remove('expanded');
-          content?.classList.remove('expanded');
-        } else {
-          this.expandedCategories.add(categoryId);
-          header.classList.add('expanded');
-          content?.classList.add('expanded');
+    // Quick team buttons
+    this.shadowRoot?.querySelectorAll('.quick-team-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const teamId = btn.getAttribute('data-team-id');
+        if (teamId) {
+          this.applyQuickTeam(teamId);
+          this.updateSelectionUI();
         }
       });
     });
 
-    // Simple mode: Preset selection
-    this.shadowRoot?.querySelectorAll('.preset-chip').forEach(chip => {
-      chip.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const presetId = chip.getAttribute('data-preset-id');
-        if (!presetId) return;
-
-        if (this.selectedPresets.has(presetId)) {
-          this.selectedPresets.delete(presetId);
-          chip.classList.remove('selected');
-        } else {
-          this.selectedPresets.add(presetId);
-          chip.classList.add('selected');
-        }
-
-        this.updateSelectionState();
-      });
+    // Add custom agent button
+    this.shadowRoot?.getElementById(this.elId('add-custom-agent'))?.addEventListener('click', () => {
+      this.openPresetEditor();
     });
 
-    // Advanced mode: Add custom agent
-    this.shadowRoot?.getElementById('add-custom-agent')?.addEventListener('click', () => {
-      this.openAgentEditor('create');
-    });
-
-    // Advanced mode: Add from preset
-    this.shadowRoot?.getElementById('add-from-preset')?.addEventListener('click', () => {
-      this.showPresetPicker();
-    });
-
-    // Advanced mode: Edit/Delete agent
-    this.shadowRoot?.querySelectorAll('.agent-action-btn.edit').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const index = parseInt(btn.getAttribute('data-index') || '-1');
-        if (index >= 0) {
-          this.openAgentEditor('edit', index);
-        }
-      });
-    });
-
-    this.shadowRoot?.querySelectorAll('.agent-action-btn.delete').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const index = parseInt(btn.getAttribute('data-index') || '-1');
-        if (index >= 0) {
-          this.customAgents.splice(index, 1);
-          this.renderPreservingDraft();
-        }
-      });
-    });
-
-    // Agent editor events
-    const agentEditor = this.shadowRoot?.getElementById('agent-editor') as AgentEditorModal;
-    agentEditor?.addEventListener('agent:saved', ((e: CustomEvent) => {
-      const { result, mode } = e.detail as { result: AgentEditorResult; mode: string };
-      
-      if (mode === 'edit' && this.editingAgentIndex >= 0) {
-        // Update existing agent
-        this.customAgents[this.editingAgentIndex] = {
-          ...this.customAgents[this.editingAgentIndex],
-          ...result,
-        };
-      } else {
-        // Add new agent
-        this.customAgents.push({
-          id: this.generateAgentId(),
-          ...result,
-        });
+    // Listen for preset saved event
+    const presetEditor = this.shadowRoot?.getElementById('preset-editor') as AgentPresetEditorModal | null;
+    presetEditor?.addEventListener('preset:saved', async (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.id) {
+        // Reload presets to include the new one
+        await this.loadData();
+        // Auto-select the newly created preset
+        this.selectedPresets.add(detail.id);
+        this.renderPreservingDraft();
       }
-      
-      this.editingAgentIndex = -1;
-      this.renderPreservingDraft();
-    }) as EventListener);
-
-    agentEditor?.addEventListener('agent:cancelled', () => {
-      this.editingAgentIndex = -1;
     });
+
+    // Agent search input
+    const agentSearch = this.shadowRoot?.getElementById('agent-search') as HTMLInputElement | null;
+    agentSearch?.addEventListener('input', () => {
+      this.agentSearchQuery = agentSearch.value;
+      this.updateAgentList();
+    });
+
+    // Agent add buttons + row click + remove buttons are attached in attachAgentListHandlers/updateTeamPanel
+    this.attachAgentListHandlers();
+    this.updateTeamPanel();
 
     // Form submission
     this.shadowRoot?.getElementById('new-conv-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       await this.createConversation();
-    });
-  }
-
-  private openAgentEditor(mode: 'create' | 'edit', index?: number) {
-    const agentEditor = this.shadowRoot?.getElementById('agent-editor') as AgentEditorModal;
-    if (!agentEditor) return;
-
-    const defaultProvider = this.getDefaultProviderAndModel();
-
-    if (mode === 'edit' && index !== undefined && index >= 0) {
-      this.editingAgentIndex = index;
-      const agent = this.customAgents[index];
-      agentEditor.configure({
-        mode: 'edit',
-        agent: agent,
-        conversationId: undefined,
-        order: index,
-      });
-    } else {
-      this.editingAgentIndex = -1;
-      if (!defaultProvider) {
-        alert('Configure an active provider with at least one model before adding agents.');
-        return;
-      }
-      agentEditor.configure({
-        mode: 'create',
-        agent: {
-          llmProviderId: defaultProvider.provider.id,
-          modelId: defaultProvider.modelId,
-        },
-        order: this.customAgents.length,
-      });
-    }
-
-    agentEditor.setAttribute('open', 'true');
-  }
-
-  private async showPresetPicker() {
-    // For simplicity, we'll create a quick preset picker using the existing preset grid
-    // and convert selected preset to a custom agent
-    const preset = await this.pickPreset();
-    if (preset) {
-      const defaultProvider = this.getDefaultProviderAndModel();
-      if (!defaultProvider) {
-        alert('Configure an active provider with at least one model before adding agents from presets.');
-        return;
-      }
-      
-      this.customAgents.push({
-        id: this.generateAgentId(),
-        name: preset.name,
-        role: preset.name,
-        expertise: preset.expertise,
-        systemPrompt: preset.systemPrompt,
-        strengths: preset.strengths,
-        thinkingStyle: preset.thinkingStyle,
-        thinkingDepth: preset.defaultThinkingDepth,
-        creativityLevel: preset.defaultCreativityLevel,
-        notebookUsage: 50,
-        llmProviderId: defaultProvider.provider.id,
-        modelId: defaultProvider.modelId,
-        presetId: preset.id,
-      });
-      
-      this.renderPreservingDraft();
-    }
-  }
-
-  private pickPreset(): Promise<AgentPreset | null> {
-    return new Promise((resolve) => {
-      // Create a simple modal for preset selection
-      const overlay = document.createElement('div');
-      overlay.style.cssText = `
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-      `;
-
-      const modal = document.createElement('div');
-      modal.style.cssText = `
-        background: var(--color-bg-secondary);
-        border: 1px solid var(--color-border);
-        border-radius: 12px;
-        padding: 24px;
-        max-width: 500px;
-        max-height: 400px;
-        overflow-y: auto;
-      `;
-
-      modal.innerHTML = `
-        <h3 style="margin: 0 0 16px; color: var(--color-text-primary);">Select a Preset</h3>
-        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
-          ${this.presets.map(p => `
-            <button type="button" style="
-              padding: 12px;
-              background: var(--color-surface);
-              border: 1px solid var(--color-border);
-              border-radius: 8px;
-              color: var(--color-text-primary);
-              cursor: pointer;
-              text-align: left;
-              font-size: 14px;
-            " data-preset-id="${p.id}">
-              <strong>${p.name}</strong>
-            </button>
-          `).join('')}
-        </div>
-        <button type="button" style="
-          margin-top: 16px;
-          padding: 8px 16px;
-          background: var(--color-surface);
-          border: 1px solid var(--color-border);
-          border-radius: 8px;
-          color: var(--color-text-secondary);
-          cursor: pointer;
-        " id="cancel-preset">Cancel</button>
-      `;
-
-      overlay.appendChild(modal);
-      document.body.appendChild(overlay);
-
-      const cleanup = () => {
-        document.body.removeChild(overlay);
-      };
-
-      overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-          cleanup();
-          resolve(null);
-        }
-      });
-
-      modal.querySelector('#cancel-preset')?.addEventListener('click', () => {
-        cleanup();
-        resolve(null);
-      });
-
-      modal.querySelectorAll('[data-preset-id]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const presetId = btn.getAttribute('data-preset-id');
-          const preset = this.presets.find(p => p.id === presetId);
-          cleanup();
-          resolve(preset || null);
-        });
-      });
     });
   }
 
@@ -2372,7 +2484,7 @@ export class NewConversationModal extends HTMLElement {
     }
 
     // Select recommended presets if any
-    if (template.recommendedPresets.length > 0 && !this.isAdvancedMode) {
+    if (template.recommendedPresets.length > 0) {
       this.selectedPresets.clear();
       template.recommendedPresets.forEach(presetId => {
         if (this.presets.some(p => p.id === presetId)) {
@@ -2380,87 +2492,34 @@ export class NewConversationModal extends HTMLElement {
         }
       });
 
-      // Update chips in-place to avoid a full re-render (prevents flash + losing DOM-only values)
-      this.shadowRoot?.querySelectorAll('.preset-chip').forEach(chip => {
-        const presetId = chip.getAttribute('data-preset-id');
-        chip.classList.toggle('selected', !!presetId && this.selectedPresets.has(presetId));
-      });
-
-      this.updateSelectionState();
-    }
-  }
-
-  private updateSelectionState() {
-    const countBadge = this.shadowRoot?.querySelector('.preset-count') as HTMLElement;
-    if (countBadge) {
-      countBadge.textContent = `${this.selectedPresets.size} selected`;
-    }
-
-    // Update category counts
-    const grouped = this.getPresetsByCategory();
-    this.shadowRoot?.querySelectorAll('.preset-category').forEach(categoryEl => {
-      const categoryId = categoryEl.getAttribute('data-category');
-      if (!categoryId) return;
-      
-      const presets = grouped.get(categoryId) || [];
-      const selectedCount = presets.filter(p => this.selectedPresets.has(p.id)).length;
-      const countEl = categoryEl.querySelector('.preset-category-count') as HTMLElement;
-      if (countEl) {
-        countEl.textContent = selectedCount > 0 ? `${selectedCount}/${presets.length}` : `${presets.length}`;
-      }
-    });
-
-    const submitBtn = this.shadowRoot?.querySelector('button[type="submit"]') as HTMLButtonElement;
-    if (submitBtn) {
-      submitBtn.disabled = !this.computeCanCreate();
+      // Re-render to update the UI
+      this.renderPreservingDraft();
     }
   }
 
   private async createConversation() {
-    const subject = (this.shadowRoot?.getElementById('subject') as HTMLInputElement)?.value;
-    const goal = (this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement)?.value;
+    const rawSubject = (this.shadowRoot?.getElementById('subject') as HTMLInputElement)?.value;
+    const rawGoal = (this.shadowRoot?.getElementById('goal') as HTMLTextAreaElement)?.value;
     const modeElement = this.shadowRoot?.querySelector('.mode-option.selected') as HTMLElement;
     const mode = (modeElement?.getAttribute('data-mode') || 'round-robin') as ConversationMode;
 
-    if (!subject || !goal) {
+    // Validate and sanitize inputs
+    const subjectValidation = validateSubject(rawSubject);
+    if (!subjectValidation.valid) {
+      this.showValidationError('subject', subjectValidation.error || 'Invalid subject');
       return;
     }
 
-    let agentConfigs: Array<{
-      presetId?: string;
-      name?: string;
-      role?: string;
-      expertise?: string;
-      llmProviderId: string;
-      modelId: string;
-      thinkingDepth?: number;
-      creativityLevel?: number;
-    }>;
-
-    if (this.isAdvancedMode) {
-      // Advanced mode: use custom agents
-      if (this.customAgents.length < 2) {
+    const goalValidation = validateGoal(rawGoal);
+    if (!goalValidation.valid) {
+      this.showValidationError('goal', goalValidation.error || 'Invalid goal');
         return;
       }
 
-      const invalidAgent = this.customAgents.find(a => !a.llmProviderId || !a.modelId);
-      if (invalidAgent) {
-        alert('Each agent must have an active provider and model selected before creating the conversation.');
-        return;
-      }
+    const subject = sanitizeInput(rawSubject);
+    const goal = sanitizeInput(rawGoal);
 
-      agentConfigs = this.customAgents.map(agent => ({
-        presetId: agent.presetId,
-        name: agent.name,
-        role: agent.role,
-        expertise: agent.expertise,
-        llmProviderId: agent.llmProviderId,
-        modelId: agent.modelId,
-        thinkingDepth: agent.thinkingDepth,
-        creativityLevel: agent.creativityLevel,
-      }));
-    } else {
-      // Simple mode: use presets with shared LLM
+    // Use selected presets with shared LLM
       const providerId =
         this.selectedProviderId ||
         (this.shadowRoot?.getElementById(this.elId('provider')) as HTMLSelectElement)?.value;
@@ -2472,19 +2531,19 @@ export class NewConversationModal extends HTMLElement {
         return;
       }
 
-      agentConfigs = Array.from(this.selectedPresets).map(presetId => ({
+    const agentConfigs = Array.from(this.selectedPresets).map(presetId => ({
         presetId,
         llmProviderId: providerId,
         modelId,
       }));
-    }
 
     try {
-      // Build opening statement and ground rules from strategy
-      const strategy = getStrategyById(this.selectedStrategyId);
+      // Build opening statement and ground rules from strategy (in target language if set)
+      const targetLang = this.selectedLanguage || undefined;
+      const strategy = getStrategyById(this.selectedStrategyId, targetLang);
       const openingStatement = this.customOpeningStatement || 
-        (strategy ? buildOpeningStatement(strategy, subject, goal) : undefined);
-      const groundRules = strategy ? buildGroundRules(strategy) : undefined;
+        (strategy ? buildOpeningStatement(strategy, subject, goal, undefined, targetLang) : undefined);
+      const groundRules = strategy ? buildGroundRules(strategy, undefined, targetLang) : undefined;
 
       const engine = await ConversationEngine.create(
         subject,

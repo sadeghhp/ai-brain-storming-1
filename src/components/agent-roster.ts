@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Agent Roster Component
-// Version: 2.3.0
 // ============================================
 
 import { agentStorage, conversationStorage, providerStorage } from '../storage/storage-manager';

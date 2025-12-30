@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Export Utilities
-// Version: 1.3.0
 // ============================================
 
 import { conversationStorage, messageStorage, agentStorage, resultDraftStorage, presetStorage, mcpServerStorage } from '../storage/storage-manager';
@@ -389,9 +388,6 @@ function shouldAutoEnableDevProxy(endpoint: string | undefined): boolean {
 }
 
 export function normalizeMCPServerImport(jsonContent: string): ExportableMCPServer[] {
-  // #region agent log
-  fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'export.ts:normalizeMCPServerImport',message:'Starting normalization',data:{jsonSample:jsonContent.substring(0, 100)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-  // #endregion
   const parsed = JSON.parse(jsonContent) as unknown;
 
   // Format A: { servers: [...] }
@@ -464,9 +460,6 @@ export function normalizeMCPServerImport(jsonContent: string): ExportableMCPServ
       };
       normalized.push(out);
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/f3786f16-cfc3-4033-88f4-86b424f94175',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'export.ts:457',message:'Normalization result Format B',data:{normalized},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     return normalized;
   }
 

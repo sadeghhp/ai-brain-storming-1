@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Conversation Settings Modal
-// Version: 1.6.0
 // ============================================
 
 import { conversationStorage, agentStorage, providerStorage, settingsStorage } from '../storage/storage-manager';
@@ -528,6 +527,86 @@ export class ConversationSettingsModal extends HTMLElement {
           cursor: not-allowed;
         }
 
+        /* Drag and Drop for Agent Cards */
+        .agent-card.draggable {
+          cursor: grab;
+          position: relative;
+        }
+
+        .agent-card.draggable:active {
+          cursor: grabbing;
+        }
+
+        .agent-card.dragging {
+          opacity: 0.5;
+          background: var(--color-primary-dim);
+          border-color: var(--color-primary);
+        }
+
+        .agent-card.drag-over {
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 2px var(--color-primary-dim);
+        }
+
+        .agent-card.drag-over-top::before {
+          content: '';
+          position: absolute;
+          top: -4px;
+          left: 0;
+          right: 0;
+          height: 3px;
+          background: var(--color-primary);
+          border-radius: var(--radius-full);
+        }
+
+        .agent-card.drag-over-bottom::after {
+          content: '';
+          position: absolute;
+          bottom: -4px;
+          left: 0;
+          right: 0;
+          height: 3px;
+          background: var(--color-primary);
+          border-radius: var(--radius-full);
+        }
+
+        .drag-handle {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-1);
+          color: var(--color-text-tertiary);
+          cursor: grab;
+          transition: color var(--transition-fast);
+          flex-shrink: 0;
+        }
+
+        .drag-handle:hover {
+          color: var(--color-text-primary);
+        }
+
+        .drag-handle:active {
+          cursor: grabbing;
+        }
+
+        .agent-order-badge {
+          position: absolute;
+          left: -8px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 18px;
+          height: 18px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-full);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          font-weight: var(--font-bold);
+          color: var(--color-text-tertiary);
+        }
+
         .add-agent-btn {
           width: 100%;
           padding: var(--space-3);
@@ -959,9 +1038,9 @@ export class ConversationSettingsModal extends HTMLElement {
     const secretary = this.agents.find(a => a.isSecretary);
 
     return `
-      <div class="agent-list">
-        ${regularAgents.map((agent) => this.renderAgentCard(agent)).join('')}
-        ${secretary ? this.renderAgentCard(secretary) : ''}
+      <div class="agent-list" id="sortable-agent-list">
+        ${regularAgents.map((agent, index) => this.renderAgentCard(agent, index)).join('')}
+        ${secretary ? this.renderAgentCard(secretary, regularAgents.length) : ''}
       </div>
 
       <button type="button" class="add-agent-btn" id="add-agent-btn" ${!editable ? 'disabled' : ''}>
@@ -974,14 +1053,28 @@ export class ConversationSettingsModal extends HTMLElement {
     `;
   }
 
-  private renderAgentCard(agent: Agent): string {
+  private renderAgentCard(agent: Agent, index: number): string {
     const provider = this.providers.find(p => p.id === agent.llmProviderId);
     const model = provider?.models.find(m => m.id === agent.modelId);
     const initials = agent.name.slice(0, 2).toUpperCase();
     const editable = this.isEditable();
+    const canDrag = editable && !agent.isSecretary;
 
     return `
-      <div class="agent-card ${agent.isSecretary ? 'secretary' : ''}" data-agent-id="${agent.id}">
+      <div class="agent-card ${agent.isSecretary ? 'secretary' : ''} ${canDrag ? 'draggable' : ''}" 
+           data-agent-id="${agent.id}" 
+           data-index="${index}"
+           ${canDrag ? 'draggable="true"' : ''}>
+        ${canDrag ? `<div class="agent-order-badge">${index + 1}</div>` : ''}
+        ${canDrag ? `
+          <div class="drag-handle" title="Drag to reorder">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="16" y2="6"/>
+              <line x1="8" y1="12" x2="16" y2="12"/>
+              <line x1="8" y1="18" x2="16" y2="18"/>
+            </svg>
+          </div>
+        ` : ''}
         <div class="agent-avatar" style="background: ${agent.color}20; color: ${agent.color};">
           ${initials}
         </div>
@@ -1191,6 +1284,118 @@ export class ConversationSettingsModal extends HTMLElement {
     this.shadowRoot?.getElementById('delete-conv-btn')?.addEventListener('click', async () => {
       await this.deleteConversation();
     });
+
+    // Drag and drop for agent reordering
+    this.setupDragAndDrop();
+  }
+
+  /**
+   * Set up drag and drop for agent reordering in the Agents tab
+   */
+  private setupDragAndDrop() {
+    const agentList = this.shadowRoot?.getElementById('sortable-agent-list');
+    if (!agentList) return;
+
+    let draggedElement: HTMLElement | null = null;
+    let draggedIndex: number = -1;
+
+    const cards = agentList.querySelectorAll('.agent-card.draggable');
+    
+    cards.forEach((card) => {
+      const cardEl = card as HTMLElement;
+
+      // Drag start
+      cardEl.addEventListener('dragstart', (e) => {
+        draggedElement = cardEl;
+        draggedIndex = parseInt(cardEl.getAttribute('data-index') || '-1');
+        cardEl.classList.add('dragging');
+        
+        // Set drag data
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', draggedIndex.toString());
+        }
+      });
+
+      // Drag end
+      cardEl.addEventListener('dragend', () => {
+        cardEl.classList.remove('dragging');
+        draggedElement = null;
+        draggedIndex = -1;
+        
+        // Remove all drag-over classes
+        cards.forEach(c => {
+          c.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+        });
+      });
+
+      // Drag over
+      cardEl.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (!draggedElement || draggedElement === cardEl) return;
+        
+        if (e.dataTransfer) {
+          e.dataTransfer.dropEffect = 'move';
+        }
+
+        // Determine if we're in the top or bottom half
+        const rect = cardEl.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const isTopHalf = (e as DragEvent).clientY < midY;
+
+        cardEl.classList.add('drag-over');
+        cardEl.classList.toggle('drag-over-top', isTopHalf);
+        cardEl.classList.toggle('drag-over-bottom', !isTopHalf);
+      });
+
+      // Drag leave
+      cardEl.addEventListener('dragleave', () => {
+        cardEl.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+      });
+
+      // Drop
+      cardEl.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        if (!draggedElement || draggedElement === cardEl) return;
+
+        const targetIndex = parseInt(cardEl.getAttribute('data-index') || '-1');
+        if (draggedIndex < 0 || targetIndex < 0) return;
+
+        // Determine insert position based on drop location
+        const rect = cardEl.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const isTopHalf = (e as DragEvent).clientY < midY;
+        
+        // Get non-secretary agents for reordering
+        const regularAgents = this.agents.filter(a => !a.isSecretary);
+        
+        // Reorder the agents array
+        const [movedAgent] = regularAgents.splice(draggedIndex, 1);
+        
+        // After removal, adjust targetIndex if dragged was before target
+        const adjustedTarget = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        // Insert before (top half) or after (bottom half) the adjusted target
+        const newIndex = isTopHalf ? adjustedTarget : adjustedTarget + 1;
+        
+        regularAgents.splice(newIndex, 0, movedAgent);
+        
+        // Persist the new order to storage
+        await Promise.all(
+          regularAgents.map((agent, idx) => 
+            agentStorage.update(agent.id, { order: idx })
+          )
+        );
+        
+        // Reload data and re-render
+        await this.loadData();
+        this.render();
+        
+        // Emit update event
+        if (this.conversation) {
+          eventBus.emit('conversation:updated', this.conversation);
+        }
+      });
+    });
   }
 
   private async deleteConversation() {
@@ -1259,8 +1464,11 @@ export class ConversationSettingsModal extends HTMLElement {
     const depthElement = this.shadowRoot?.querySelector('.depth-option.selected') as HTMLElement;
     const conversationDepth = (depthElement?.getAttribute('data-depth') || 'standard') as ConversationDepth;
     
-    // Get target language
-    const targetLanguage = (this.shadowRoot?.getElementById('target-language') as HTMLSelectElement)?.value || undefined;
+    // Get target language (empty string means English/default, which should clear any previous setting)
+    const targetLanguageSelect = this.shadowRoot?.getElementById('target-language') as HTMLSelectElement | null;
+    // Empty string = English (default), non-empty = specific language
+    // We pass the value directly - empty string will be stored and handled by language service
+    const targetLanguage = targetLanguageSelect?.value || undefined;
 
     await conversationStorage.update(this.conversation.id, {
       subject,

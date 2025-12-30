@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Event Bus (Pub/Sub)
-// Version: 1.0.0
 // ============================================
 
 import type { AppEvents } from '../types';

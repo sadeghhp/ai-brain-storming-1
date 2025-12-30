@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - MCP Router
-// Version: 1.0.0
 // ============================================
 //
 // Central service for managing MCP server connections

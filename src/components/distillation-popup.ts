@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Distillation Popup Component
-// Version: 1.0.0
 // ============================================
 // Displays the context/distillation information used to generate an agent message
 

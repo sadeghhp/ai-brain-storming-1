@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Result Manager
-// Version: 2.0.0
 // ============================================
 
 import { SecretaryAgent } from '../agents/secretary';

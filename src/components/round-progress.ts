@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Round Progress Component
-// Version: 1.0.0
 // ============================================
 
 import { agentStorage, conversationStorage, turnStorage } from '../storage/storage-manager';

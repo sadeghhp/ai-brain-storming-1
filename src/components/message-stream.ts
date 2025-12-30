@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Message Stream Component
-// Version: 1.6.1
 // ============================================
 
 import { messageStorage, agentStorage, contextSnapshotStorage } from '../storage/storage-manager';

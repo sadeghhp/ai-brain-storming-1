@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Storage Manager
-// Version: 2.6.0
 // ============================================
 
 import { v4 as uuidv4 } from 'uuid';
@@ -45,10 +44,6 @@ import type {
   PaginatedResult,
 } from '../types';
 
-// NOTE: Some environments/typecheckers fail to see newer Dexie tables
-// (`distilledMemories`, `contextSnapshots`) on `BrainstormDB` even though they exist at runtime.
-// Keep the rest strongly typed; only loosen typing for these two tables.
-const dbAny = db as any;
 
 function normalizeConversation(raw: any): Conversation {
   const subjectRaw = typeof raw?.subject === 'string' ? raw.subject : '';
@@ -122,7 +117,7 @@ export const conversationStorage = {
   },
 
   async delete(id: string): Promise<void> {
-    await db.transaction('rw', [db.conversations, db.agents, db.turns, db.messages, db.notebooks, db.resultDrafts, dbAny.distilledMemories, dbAny.contextSnapshots, dbAny.mcpToolCalls, db.userInterjections], async () => {
+    await db.transaction('rw', [db.conversations, db.agents, db.turns, db.messages, db.notebooks, db.resultDrafts, db.distilledMemories, db.contextSnapshots, db.mcpToolCalls, db.userInterjections], async () => {
       // Delete all related data
       const agents = await db.agents.where('conversationId').equals(id).toArray();
       for (const agent of agents) {
@@ -132,9 +127,9 @@ export const conversationStorage = {
       await db.turns.where('conversationId').equals(id).delete();
       await db.messages.where('conversationId').equals(id).delete();
       await db.resultDrafts.delete(id);
-      await dbAny.distilledMemories.delete(id);
-      await dbAny.contextSnapshots.where('conversationId').equals(id).delete();
-      await dbAny.mcpToolCalls.where('conversationId').equals(id).delete();
+      await db.distilledMemories.delete(id);
+      await db.contextSnapshots.where('conversationId').equals(id).delete();
+      await db.mcpToolCalls.where('conversationId').equals(id).delete();
       await db.userInterjections.where('conversationId').equals(id).delete();
       await db.conversations.delete(id);
     });
@@ -190,7 +185,12 @@ export const agentStorage = {
   },
 
   async getSecretary(conversationId: string): Promise<Agent | undefined> {
-    return db.agents.where({ conversationId, isSecretary: 1 }).first();
+    // Use filter instead of compound index to handle boolean/0/1 inconsistency in IndexedDB
+    const agents = await db.agents.where('conversationId').equals(conversationId).toArray();
+    return agents.find(a => {
+      const val = (a as any).isSecretary;
+      return val === true || val === 1;
+    });
   },
 
   async update(id: string, data: UpdateAgent): Promise<Agent | undefined> {
@@ -490,7 +490,7 @@ export const distilledMemoryStorage = {
    * Get distilled memory for a conversation
    */
   async get(conversationId: string): Promise<DistilledMemory | undefined> {
-    return dbAny.distilledMemories.get(conversationId);
+    return db.distilledMemories.get(conversationId);
   },
 
   /**
@@ -511,7 +511,7 @@ export const distilledMemoryStorage = {
       totalMessagesDistilled: 0,
       updatedAt: Date.now(),
     };
-    await dbAny.distilledMemories.put(memory);
+    await db.distilledMemories.put(memory);
     return memory;
   },
 
@@ -519,7 +519,7 @@ export const distilledMemoryStorage = {
    * Update distilled memory with partial data
    */
   async update(conversationId: string, data: UpdateDistilledMemory): Promise<DistilledMemory> {
-    const existing = await dbAny.distilledMemories.get(conversationId);
+    const existing = await db.distilledMemories.get(conversationId);
     
     // Helper to safely extract array or use default (filters out undefined elements from DeepPartial)
     const getStringArray = (arr: (string | undefined)[] | undefined, defaultVal: string[]): string[] => 
@@ -541,7 +541,7 @@ export const distilledMemoryStorage = {
       totalMessagesDistilled: data.totalMessagesDistilled ?? existing?.totalMessagesDistilled ?? 0,
       updatedAt: Date.now(),
     };
-    await dbAny.distilledMemories.put(memory);
+    await db.distilledMemories.put(memory);
     return memory;
   },
 
@@ -549,7 +549,7 @@ export const distilledMemoryStorage = {
    * Get or create distilled memory (lazy initialization)
    */
   async getOrCreate(conversationId: string): Promise<DistilledMemory> {
-    const existing = await dbAny.distilledMemories.get(conversationId);
+    const existing = await db.distilledMemories.get(conversationId);
     if (existing) return existing;
     return this.create(conversationId);
   },
@@ -589,7 +589,7 @@ export const distilledMemoryStorage = {
    * Get pinned facts for a conversation
    */
   async getPinnedFacts(conversationId: string): Promise<PinnedFact[]> {
-    const memory = await dbAny.distilledMemories.get(conversationId);
+    const memory = await db.distilledMemories.get(conversationId);
     return memory?.pinnedFacts || [];
   },
 
@@ -614,7 +614,7 @@ export const distilledMemoryStorage = {
    * Check if distillation is needed (based on round progress)
    */
   async needsDistillation(conversationId: string, currentRound: number): Promise<boolean> {
-    const memory = await dbAny.distilledMemories.get(conversationId);
+    const memory = await db.distilledMemories.get(conversationId);
     if (!memory) return false;
     // Distillation is needed if we're at least 2 rounds ahead of last distillation
     return currentRound > memory.lastDistilledRound + 1;
@@ -624,7 +624,7 @@ export const distilledMemoryStorage = {
    * Delete distilled memory for a conversation
    */
   async delete(conversationId: string): Promise<void> {
-    await dbAny.distilledMemories.delete(conversationId);
+    await db.distilledMemories.delete(conversationId);
   },
 
   /**
@@ -659,7 +659,7 @@ export const contextSnapshotStorage = {
       ...data,
       createdAt: Date.now(),
     };
-    await dbAny.contextSnapshots.put(snapshot);
+    await db.contextSnapshots.put(snapshot);
     return snapshot;
   },
 
@@ -667,21 +667,21 @@ export const contextSnapshotStorage = {
    * Get context snapshot by turn ID
    */
   async getByTurnId(turnId: string): Promise<ContextSnapshot | undefined> {
-    return dbAny.contextSnapshots.get(turnId);
+    return db.contextSnapshots.get(turnId);
   },
 
   /**
    * Get all context snapshots for a conversation
    */
   async getByConversation(conversationId: string): Promise<ContextSnapshot[]> {
-    return dbAny.contextSnapshots.where('conversationId').equals(conversationId).toArray();
+    return db.contextSnapshots.where('conversationId').equals(conversationId).toArray();
   },
 
   /**
    * Get context snapshots for multiple turn IDs (batch fetch)
    */
   async getByTurnIds(turnIds: string[]): Promise<Map<string, ContextSnapshot>> {
-    const snapshots = await dbAny.contextSnapshots
+    const snapshots = await db.contextSnapshots
       .where('turnId')
       .anyOf(turnIds)
       .toArray();
@@ -692,21 +692,21 @@ export const contextSnapshotStorage = {
    * Delete context snapshot by turn ID
    */
   async delete(turnId: string): Promise<void> {
-    await dbAny.contextSnapshots.delete(turnId);
+    await db.contextSnapshots.delete(turnId);
   },
 
   /**
    * Delete all context snapshots for a conversation
    */
   async deleteByConversation(conversationId: string): Promise<number> {
-    return dbAny.contextSnapshots.where('conversationId').equals(conversationId).delete();
+    return db.contextSnapshots.where('conversationId').equals(conversationId).delete();
   },
 
   /**
    * Check if a context snapshot exists for a turn
    */
   async exists(turnId: string): Promise<boolean> {
-    const snapshot = await dbAny.contextSnapshots.get(turnId);
+    const snapshot = await db.contextSnapshots.get(turnId);
     return !!snapshot;
   },
 };
@@ -920,7 +920,7 @@ export const mcpServerStorage = {
       isActive: false,
       tools: [],
     };
-    await dbAny.mcpServers.put(server);
+    await db.mcpServers.put(server);
     return server;
   },
 
@@ -928,28 +928,28 @@ export const mcpServerStorage = {
    * Get MCP server by ID
    */
   async getById(id: string): Promise<MCPServer | undefined> {
-    return dbAny.mcpServers.get(id);
+    return db.mcpServers.get(id);
   },
 
   /**
    * Get all MCP servers
    */
   async getAll(): Promise<MCPServer[]> {
-    return dbAny.mcpServers.toArray();
+    return db.mcpServers.toArray();
   },
 
   /**
    * Get all active MCP servers
    */
   async getActive(): Promise<MCPServer[]> {
-    return dbAny.mcpServers.where('isActive').equals(1).toArray();
+    return db.mcpServers.where('isActive').equals(1).toArray();
   },
 
   /**
    * Get MCP servers by transport type
    */
   async getByTransport(transport: 'http' | 'stdio'): Promise<MCPServer[]> {
-    return dbAny.mcpServers.where('transport').equals(transport).toArray();
+    return db.mcpServers.where('transport').equals(transport).toArray();
   },
 
   /**
@@ -957,18 +957,18 @@ export const mcpServerStorage = {
    */
   async getByIds(ids: string[]): Promise<MCPServer[]> {
     if (ids.length === 0) return [];
-    return dbAny.mcpServers.where('id').anyOf(ids).toArray();
+    return db.mcpServers.where('id').anyOf(ids).toArray();
   },
 
   /**
    * Update an MCP server
    */
   async update(id: string, data: UpdateMCPServer): Promise<MCPServer | undefined> {
-    const existing = await dbAny.mcpServers.get(id);
+    const existing = await db.mcpServers.get(id);
     if (!existing) return undefined;
 
     const updated: MCPServer = { ...existing, ...data } as MCPServer;
-    await dbAny.mcpServers.put(updated);
+    await db.mcpServers.put(updated);
     return updated;
   },
 
@@ -1008,14 +1008,14 @@ export const mcpServerStorage = {
    * Delete an MCP server
    */
   async delete(id: string): Promise<void> {
-    await dbAny.mcpServers.delete(id);
+    await db.mcpServers.delete(id);
   },
 
   /**
    * Check if server name already exists
    */
   async nameExists(name: string, excludeId?: string): Promise<boolean> {
-    const servers = await dbAny.mcpServers.toArray();
+    const servers = await db.mcpServers.toArray();
     return servers.some((s: MCPServer) => 
       s.name.toLowerCase() === name.toLowerCase() && s.id !== excludeId
     );
@@ -1037,7 +1037,7 @@ export const mcpToolCallStorage = {
       status: data.status || 'pending',
       createdAt: Date.now(),
     };
-    await dbAny.mcpToolCalls.put(toolCall);
+    await db.mcpToolCalls.put(toolCall);
     return toolCall;
   },
 
@@ -1045,14 +1045,14 @@ export const mcpToolCallStorage = {
    * Get tool call by ID
    */
   async getById(id: string): Promise<MCPToolCall | undefined> {
-    return dbAny.mcpToolCalls.get(id);
+    return db.mcpToolCalls.get(id);
   },
 
   /**
    * Get all tool calls for a conversation
    */
   async getByConversation(conversationId: string): Promise<MCPToolCall[]> {
-    return dbAny.mcpToolCalls
+    return db.mcpToolCalls
       .where('conversationId')
       .equals(conversationId)
       .sortBy('createdAt');
@@ -1062,7 +1062,7 @@ export const mcpToolCallStorage = {
    * Get tool calls for a specific turn
    */
   async getByTurn(turnId: string): Promise<MCPToolCall[]> {
-    return dbAny.mcpToolCalls
+    return db.mcpToolCalls
       .where('turnId')
       .equals(turnId)
       .sortBy('createdAt');
@@ -1072,7 +1072,7 @@ export const mcpToolCallStorage = {
    * Get pending tool calls for a conversation
    */
   async getPending(conversationId: string): Promise<MCPToolCall[]> {
-    return dbAny.mcpToolCalls
+    return db.mcpToolCalls
       .where({ conversationId, status: 'pending' })
       .toArray();
   },
@@ -1086,7 +1086,7 @@ export const mcpToolCallStorage = {
     result?: string, 
     error?: string
   ): Promise<MCPToolCall | undefined> {
-    const existing = await dbAny.mcpToolCalls.get(id);
+    const existing = await db.mcpToolCalls.get(id);
     if (!existing) return undefined;
 
     const updated: MCPToolCall = {
@@ -1096,7 +1096,7 @@ export const mcpToolCallStorage = {
       error,
       executedAt: status === 'executed' || status === 'failed' ? Date.now() : undefined,
     };
-    await dbAny.mcpToolCalls.put(updated);
+    await db.mcpToolCalls.put(updated);
     return updated;
   },
 
@@ -1132,14 +1132,14 @@ export const mcpToolCallStorage = {
    * Delete all tool calls for a conversation
    */
   async deleteByConversation(conversationId: string): Promise<number> {
-    return dbAny.mcpToolCalls.where('conversationId').equals(conversationId).delete();
+    return db.mcpToolCalls.where('conversationId').equals(conversationId).delete();
   },
 
   /**
    * Delete all tool calls for a turn
    */
   async deleteByTurn(turnId: string): Promise<number> {
-    return dbAny.mcpToolCalls.where('turnId').equals(turnId).delete();
+    return db.mcpToolCalls.where('turnId').equals(turnId).delete();
   },
 };
 

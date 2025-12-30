@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Search Utilities
-// Version: 1.0.0
 // ============================================
 
 import { conversationStorage, messageStorage, agentStorage, presetStorage } from '../storage/storage-manager';

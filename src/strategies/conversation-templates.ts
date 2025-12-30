@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Conversation Templates
-// Version: 1.0.0
 // ============================================
 
 import type { StartingStrategyId, ConversationMode } from '../types';

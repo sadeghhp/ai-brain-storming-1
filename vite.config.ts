@@ -1,6 +1,13 @@
 import { defineConfig } from 'vite';
+import { readFileSync } from 'fs';
+
+// Read version from package.json
+const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(packageJson.version),
+  },
   // GitHub Pages serves project sites from `/<repo>/`, so Vite must build with a matching base.
   // On GitHub Actions, `GITHUB_REPOSITORY` is like "owner/repo". For user/org Pages repos
   // (e.g. "owner/owner.github.io") we keep base as "/".

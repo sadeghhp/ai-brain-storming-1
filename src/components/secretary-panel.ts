@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Secretary Panel Component
-// Version: 2.0.0
 // ============================================
 
 import { resultDraftStorage, messageStorage, agentStorage } from '../storage/storage-manager';

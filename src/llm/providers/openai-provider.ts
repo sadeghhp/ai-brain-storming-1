@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - OpenAI-Compatible Provider
-// Version: 1.0.0
 // ============================================
 
 import { BaseLLMProvider, type ExtendedProviderConfig } from './base-provider';
@@ -14,6 +13,8 @@ import type {
   OpenRouterStreamChunk,
 } from '../types';
 import type { ApiFormat } from '../../types';
+import { countTokens } from '../token-counter';
+import { CACHE } from '../../constants';
 
 /**
  * OpenAI-Compatible LLM Provider
@@ -22,7 +23,7 @@ import type { ApiFormat } from '../../types';
 export class OpenAIProvider extends BaseLLMProvider {
   private modelsCache: LLMModel[] | null = null;
   private modelsCacheTime: number = 0;
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_TTL = CACHE.MODELS_TTL_MS;
   private providerName: string;
 
   constructor(
@@ -123,6 +124,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       throw this.createError('NOT_CONFIGURED', 'Provider not configured', false);
     }
 
+    // Wait for rate limit slot
+    await this.waitForRateLimit();
+
     const controller = this.createAbortController(options.signal);
 
     const headers: Record<string, string> = {
@@ -149,10 +153,14 @@ export class OpenAIProvider extends BaseLLMProvider {
     );
 
     const data = await response.json() as OpenRouterResponse;
+    const tokensUsed = data.usage?.total_tokens || 0;
+    
+    // Record token usage for rate limiting
+    this.recordTokenUsage(tokensUsed);
 
     return {
       content: data.choices[0]?.message?.content || '',
-      tokensUsed: data.usage?.total_tokens || 0,
+      tokensUsed,
       finishReason: data.choices[0]?.finish_reason || 'stop',
       model: data.model,
     };
@@ -165,6 +173,9 @@ export class OpenAIProvider extends BaseLLMProvider {
     if (!this.isConfigured()) {
       throw this.createError('NOT_CONFIGURED', 'Provider not configured', false);
     }
+
+    // Wait for rate limit slot
+    await this.waitForRateLimit();
 
     const controller = this.createAbortController(options.signal);
 
@@ -230,9 +241,15 @@ export class OpenAIProvider extends BaseLLMProvider {
 
       onChunk({ content: '', done: true });
 
+      // Estimate tokens for streaming response since usage data isn't available
+      const estimatedTokens = countTokens(fullContent);
+      
+      // Record token usage for rate limiting
+      this.recordTokenUsage(estimatedTokens);
+
       return {
         content: fullContent,
-        tokensUsed: 0, // Not available in streaming
+        tokensUsed: estimatedTokens,
         finishReason,
         model,
       };

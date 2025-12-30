@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Turn Manager
-// Version: 1.0.0
 // ============================================
 
 import type { Agent, Turn, ConversationMode } from '../types';
@@ -232,9 +231,6 @@ export class TurnManager {
   async isTurnCompleted(round: number, sequence: number): Promise<boolean> {
     const turnId = generateTurnId(this.conversationId, round, sequence);
     const completed = await turnStorage.isCompleted(turnId);
-    // #region debug log H1
-    (() => { const payload = {location:'src/engine/turn-manager.ts:isTurnCompleted',message:'isTurnCompleted() checked',data:{conversationId:this.conversationId,turnId,round,sequence,completed},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1'}; try{navigator.sendBeacon?.('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',new Blob([JSON.stringify(payload)],{type:'application/json'}));}catch{} fetch('/ingest/214c24a0-baca-46e5-a480-b608d42ef09d',{method:'POST',keepalive:true,credentials:'omit',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).catch(()=>{}); })();
-    // #endregion
     return completed;
   }
 

@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Token Counter
-// Version: 1.0.0
 // ============================================
 
 import { encode } from 'gpt-tokenizer';

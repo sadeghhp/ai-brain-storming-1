@@ -1,6 +1,5 @@
 // ============================================
 // AI Brainstorm - Result Draft Panel Component
-// Version: 1.0.0
 // ============================================
 
 import { resultDraftStorage } from '../storage/storage-manager';
